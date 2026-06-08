@@ -1,0 +1,35 @@
+{
+  "instance_id": "caddyserver__caddy-6411",
+  "repo": "https://github.com/caddyserver/caddy.git",
+  "base_commit": "59cbb2c83a03b6fe352ae0b5d05581d9148a4d24",
+  "instance_timeout_sec": 3600,
+  "hooks": {
+    "before_agent": {
+      "command": "sh \"$BENCH_ENV_DIR/setup.sh\"",
+      "timeout_sec": 1800
+    }
+  },
+  "test_patch_path": "patches/test.patch",
+  "prompt": "file.* global replacements trailing newline interaction with secrets\nSo basically when you do something like `acme_dns cloudflare {file./path/cool-secret}` it will error out if the secret contains a trailing newline, so you will need to remove the trailing newline from the file for it to work, which is against the unix convention.\r\nI think this is a bug, but not sure if it needs to be handled on the dns adapter side or here.\r\nIs it reasonable to just always strip newline for file.* replacements?\n",
+  "check_commands": [
+    {
+      "name": "gold_tests",
+      "command": "sh \"$BENCH_ENV_DIR/run-gold-tests.sh\"",
+      "timeout_sec": 1800
+    },
+    {
+      "name": "project_tests",
+      "command": "sh \"$BENCH_ENV_DIR/run-selected-tests.sh\"",
+      "timeout_sec": 1800
+    }
+  ],
+  "docker": {
+    "image": "benchrail-universal:latest",
+    "env": {
+      "BENCH_ENV_GO_VERSION": "1.24.3"
+    },
+    "env_from_host": [
+      "CODEX_API_KEY"
+    ]
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "instance_id": "tokio-rs__tokio-7139",
+  "repo": "https://github.com/tokio-rs/tokio.git",
+  "base_commit": "b8ac94ed70df22f885bad7ea3c0ff51c536bad4a",
+  "instance_timeout_sec": 3600,
+  "hooks": {
+    "before_agent": {
+      "command": "sh \"$BENCH_ENV_DIR/setup.sh\"",
+      "timeout_sec": 1800
+    }
+  },
+  "test_patch_path": "patches/test.patch",
+  "prompt": "poll_read on a tokio::fs::File with an empty buffer returns EOF on the *next* poll\n**Version**\n`tokio v1.43.0`\n\n**Platform**\n```\nDarwin goffrie-mbp 24.2.0 Darwin Kernel Version 24.2.0: Fri Dec  6 19:01:59 PST 2024; root:xnu-11215.61.5~2/RELEASE_ARM64_T6000 arm64\n```\nbut I believe the bug is cross-platform.\n\n**Description**\nThe documentation for AsyncRead suggests that calling poll_read with an empty read buffer should return Poll::Ready(Ok(())). However, for fs::File, it instead returns Poll::Pending and then returns Poll::Ready(Ok(())) with no data (i.e. signalling EOF) on the _next_ poll, even if that poll supplies a nonempty buffer.\nTracing the code, `let max_buf_size = cmp::min(dst.remaining(), me.max_buf_size);` [here](https://github.com/tokio-rs/tokio/blob/5086e56dcb85223df27019d80225c29153d96050/tokio/src/fs/file.rs#L606) asks the background thread to read 0 bytes, and then on the next poll we'll do `buf.copy_to(dst);` with zero bytes and immediately return `Poll::Ready(Ok(()));`.\n\nIt could be argued that this is not a bug since you shouldn't be calling poll_read with an empty buffer anyway, but this happened to me in the wild and the downstream code _would_ have been correct if tokio::fs::File just returned immediately (notably wrapping the file in a BufReader fixes the issue too).\n\nReproducer:\n\n```rust\n// src/main.rs\nuse std::{pin::Pin, task::Context};\n\nuse futures::task::noop_waker_ref;\nuse tokio::io::{AsyncRead as _, AsyncReadExt as _, ReadBuf};\n\n#[tokio::main(flavor = \"current_thread\")]\nasync fn main() {\n    let mut file = tokio::fs::File::open(\"/dev/zero\").await.unwrap();\n    // puts the file in a bad state\n    let poll = Pin::new(&mut file).poll_read(&mut Context::from_waker(noop_waker_ref()), &mut ReadBuf::new(&mut []));\n    _ = dbg!(poll);\n    // should succeed, but doesn't\n    file.read_exact(&mut [0; 4096]).await.unwrap();\n}\n```\n\n```toml\n# Cargo.toml\n[package]\nname = \"repro\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nfutures = \"0.3.31\"\ntokio = { version = \"1.43.0\", features = [\"rt\", \"fs\", \"macros\", \"io-util\"] }\n```\n\nI expected to see this happen: `poll = Pending` followed by a successful read of 4096 bytes\n\nInstead, this happened:\n```\n[src/main.rs:11:9] poll = Pending\nthread 'main' panicked at src/main.rs:13:43:\ncalled `Result::unwrap()` on an `Err` value: Custom { kind: UnexpectedEof, error: \"early eof\" }\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n```\n\n",
+  "check_commands": [
+    {
+      "name": "gold_tests",
+      "command": "sh \"$BENCH_ENV_DIR/run-gold-tests.sh\"",
+      "timeout_sec": 1800
+    },
+    {
+      "name": "project_tests",
+      "command": "sh \"$BENCH_ENV_DIR/run-selected-tests.sh\"",
+      "timeout_sec": 1800
+    }
+  ],
+  "docker": {
+    "image": "benchrail-universal:latest",
+    "env": {
+      "BENCH_ENV_RUST_VERSION": "1.95.0"
+    },
+    "env_from_host": [
+      "CODEX_API_KEY"
+    ]
+  }
+}

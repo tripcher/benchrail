@@ -1,0 +1,25 @@
+diff --git a/pydicom/tests/test_benchrail_gold_json.py b/pydicom/tests/test_benchrail_gold_json.py
+new file mode 100644
+index 00000000..21b95f37
+--- /dev/null
++++ b/pydicom/tests/test_benchrail_gold_json.py
+@@ -0,0 +1,19 @@
++import pytest
++
++from pydicom.dataelem import RawDataElement
++from pydicom.dataset import Dataset
++from pydicom.tag import Tag
++
++
++def test_benchrail_gold_suppress_invalid_tags_with_failed_dataelement(enforce_valid_values):
++    ds = Dataset()
++    ds[0x00082128] = RawDataElement(
++        Tag(0x00082128), 'IS', 4, b'5.25', 0, True, True
++    )
++
++    with pytest.raises(Exception):
++        ds.to_json_dict()
++
++    ds_json = ds.to_json_dict(suppress_invalid_tags=True)
++
++    assert "00082128" not in ds_json

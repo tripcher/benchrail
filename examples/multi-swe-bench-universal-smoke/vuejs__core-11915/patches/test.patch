@@ -1,0 +1,29 @@
+diff --git a/packages/compiler-core/__tests__/benchrail_gold.parse.spec.ts b/packages/compiler-core/__tests__/benchrail_gold.parse.spec.ts
+new file mode 100644
+index 00000000..04e46732
+--- /dev/null
++++ b/packages/compiler-core/__tests__/benchrail_gold.parse.spec.ts
+@@ -0,0 +1,23 @@
++import type { ElementNode } from '../src/ast'
++import { NodeTypes } from '../src/ast'
++import { baseParse } from '../src/parser'
++
++describe('benchrail gold tests: compiler parse', () => {
++  test('v-pre ignores interpolation openings inside textarea', () => {
++    const ast = baseParse(`<div v-pre><textarea>{{ foo </textarea></div>`, {
++      parseMode: 'html',
++    })
++
++    expect((ast.children[0] as ElementNode).children).toMatchObject([
++      {
++        type: NodeTypes.ELEMENT,
++        children: [
++          {
++            type: NodeTypes.TEXT,
++            content: `{{ foo `,
++          },
++        ],
++      },
++    ])
++  })
++})

@@ -1,0 +1,86 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "benchrail"
+dynamic = ["version"]
+description = "CLI for benchmarking agent setups"
+readme = "README.md"
+license = "MIT"
+authors = [
+    { name = "tripcher" }
+]
+requires-python = ">=3.10"
+keywords = ["benchmark", "cli", "agents", "codex", "claude", "evaluation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Software Development :: Quality Assurance",
+    "Typing :: Typed",
+]
+dependencies = [
+    "typer>=0.12",
+    "pydantic>=2.0",
+    "docker>=7.0",
+    "rich>=13.0",
+]
+
+[project.scripts]
+benchrail = "benchrail.cli:app"
+
+[tool.hatch.version]
+path = "benchrail/__init__.py"
+
+[dependency-groups]
+dev = [
+    "build>=1.2",
+    "pytest>=8.0",
+    "ruff>=0.9",
+    "mypy>=1.10",
+    "twine>=5.1",
+    "types-docker>=7.0",
+]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_unused_ignores = true
+# pydantic and typer have their own type handling
+plugins = ["pydantic.mypy"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "RUF", # ruff-specific rules
+]
+
+
+[tool.ruff.lint.isort]
+known-first-party = ["benchrail"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

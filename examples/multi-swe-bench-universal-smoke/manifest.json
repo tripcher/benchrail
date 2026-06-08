@@ -1,0 +1,10 @@
+{
+  "agents": [
+    {
+      "id": "codex-gpt-5.4-mini-medium",
+      "agent": "codex",
+      "version": "latest",
+      "command": "--model gpt-5.4-mini --config model_reasoning_effort=\"medium\" --disable fast_mode"
+    }
+  ]
+}
