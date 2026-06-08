@@ -1,6 +1,6 @@
 import re
 
-from pydantic import BaseModel, field_validator, model_validator
+from benchrail.pydantic_compat import BaseModel, field_validator, model_validator
 
 
 class AgentEntry(BaseModel):

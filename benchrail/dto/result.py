@@ -1,6 +1,6 @@
 from collections.abc import Callable
 
-from pydantic import BaseModel, ConfigDict
+from benchrail.pydantic_compat import AllowExtraBaseModel, BaseModel
 
 
 class AgentStats(BaseModel):
@@ -35,7 +35,7 @@ class InstanceResult(BaseModel):
     checks: list[CheckResult]
 
 
-class RunResult(BaseModel):
+class RunResult(AllowExtraBaseModel):
     schema_version: str = "1.0"
     run_id: str
     mode: str
@@ -54,8 +54,6 @@ class RunResult(BaseModel):
     total_cost_credits: float | None = None
     total_agent_duration_ms: int | None = None
     total_turns: int | None = None
-
-    model_config = ConfigDict(extra="allow")
 
     @classmethod
     def aggregate(
@@ -135,6 +133,7 @@ class RunResult(BaseModel):
             total_cost_credits=total_cost_credits,
             total_agent_duration_ms=total_agent_dur,
             total_turns=total_turns,
-            **extra,
         )
+        if extra:
+            return run.model_copy(update=extra)
         return run

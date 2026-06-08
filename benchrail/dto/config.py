@@ -1,7 +1,7 @@
 import re
 from pathlib import Path
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from benchrail.pydantic_compat import BaseModel, Field, field_validator, model_validator
 
 _ENV_NAME_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 

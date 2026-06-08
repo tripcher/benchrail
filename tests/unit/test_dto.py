@@ -163,6 +163,20 @@ def test_instance_config_negative_timeout() -> None:
         CheckCommand(name="tests", command="make test", timeout_sec=-1)
 
 
+def test_instance_config_nested_validation_does_not_add_root_error() -> None:
+    data = {
+        "instance_id": "task-1",
+        "repo": "https://github.com/example/repo.git",
+        "base_commit": "abc123",
+        "prompt": "Fix the bug",
+        "check_commands": [{"name": "tests", "command": "", "timeout_sec": 300}],
+    }
+    with pytest.raises(ValidationError) as exc_info:
+        InstanceConfig.model_validate(data)
+
+    assert all("__root__" not in error["loc"] for error in exc_info.value.errors())
+
+
 def test_instance_config_resolve_patch_paths_missing(tmp_path: Path) -> None:
     data = {
         "instance_id": "task-1",
@@ -289,3 +303,20 @@ def test_run_result_aggregate() -> None:
     assert dump["checks_tests_passed"] == 1
     assert dump["checks_tests_failed"] == 1
     assert dump["checks_tests_total"] == 2
+
+
+def test_run_result_model_validate_allows_extra_fields() -> None:
+    run = RunResult.model_validate(
+        {
+            "run_id": "run-123",
+            "mode": "local",
+            "dataset_path": "dataset",
+            "status": "completed",
+            "passed": 1,
+            "failed": 0,
+            "total": 1,
+            "duration_seconds": 30.0,
+            "checks_tests_passed": 1,
+        }
+    )
+    assert run.model_dump()["checks_tests_passed"] == 1
