@@ -1,5 +1,7 @@
 import re
+from copy import deepcopy
 from pathlib import Path
+from typing import Any, cast
 
 from benchrail.pydantic_compat import BaseModel, Field, field_validator, model_validator
 
@@ -87,18 +89,30 @@ class DockerConfig(BaseModel):
             raise ValueError("docker.image and docker.dockerfile are mutually exclusive")
         return self
 
-    def resolve_dockerfile_path(self, instance_dir: Path) -> Path | None:
+    def resolve_dockerfile_path(
+        self,
+        instance_dir: Path,
+        dataset_dir: Path | None = None,
+    ) -> Path | None:
         if not self.dockerfile:
             return None
-        resolved = (instance_dir / self.dockerfile).resolve()
-        instance_resolved = instance_dir.resolve()
-        try:
-            resolved.relative_to(instance_resolved)
-        except ValueError:
-            raise ValueError("docker.dockerfile must not escape instance directory") from None
-        if not resolved.exists():
-            raise ValueError(f"docker.dockerfile: file not found: {resolved}")
-        return resolved
+
+        roots = [instance_dir]
+        if dataset_dir is not None:
+            roots.append(dataset_dir)
+
+        candidates: list[Path] = []
+        for root in roots:
+            resolved = (root / self.dockerfile).resolve()
+            try:
+                resolved.relative_to(root.resolve())
+            except ValueError:
+                raise ValueError("docker.dockerfile must not escape its config directory") from None
+            candidates.append(resolved)
+            if resolved.exists():
+                return resolved
+
+        raise ValueError(f"docker.dockerfile: file not found: {', '.join(map(str, candidates))}")
 
 
 class InstanceConfig(BaseModel):
@@ -161,3 +175,127 @@ class InstanceConfig(BaseModel):
         if not resolved.exists():
             raise ValueError(f"{field}: file not found: {resolved}")
         return resolved
+
+
+class DatasetConfig(BaseModel):
+    repo: str | None = None
+    base_commit: str | None = None
+    instance_timeout_sec: int | None = None
+    hooks: HooksConfig | None = None
+    prepare_patch_path: str | None = None
+    test_patch_path: str | None = None
+    prompt: str | None = None
+    docker: DockerConfig | None = None
+    check_commands: list[CheckCommand] | None = None
+
+    @field_validator("repo")
+    @classmethod
+    def repo_not_empty(cls, v: str | None) -> str | None:
+        if v is not None and not v.strip():
+            raise ValueError("repo must not be empty")
+        return v
+
+    @field_validator("base_commit")
+    @classmethod
+    def base_commit_not_empty(cls, v: str | None) -> str | None:
+        if v is not None and not v.strip():
+            raise ValueError("base_commit must not be empty")
+        return v
+
+    @field_validator("instance_timeout_sec")
+    @classmethod
+    def timeout_positive(cls, v: int | None) -> int | None:
+        if v is not None and v <= 0:
+            raise ValueError("instance_timeout_sec must be a positive integer")
+        return v
+
+    @model_validator(mode="after")
+    def validate_check_commands(self) -> "DatasetConfig":
+        if self.check_commands is None:
+            return self
+        if not self.check_commands:
+            raise ValueError("check_commands must not be empty")
+        names = [c.name for c in self.check_commands]
+        if len(names) != len(set(names)):
+            raise ValueError("check_commands names must be unique within config")
+        return self
+
+
+def merge_dataset_config(
+    dataset_config: DatasetConfig | None,
+    instance_data: dict[str, object],
+) -> dict[str, object]:
+    base = dataset_config.model_dump(exclude_unset=True) if dataset_config is not None else {}
+    return _merge_config_objects(base, instance_data)
+
+
+def _merge_config_objects(base: dict[str, Any], override: dict[str, object]) -> dict[str, object]:
+    merged: dict[str, object] = deepcopy(base)
+    for key, value in override.items():
+        if key == "hooks" and isinstance(merged.get(key), dict) and isinstance(value, dict):
+            merged[key] = _merge_plain_dicts(cast(dict[str, Any], merged[key]), value)
+        elif key == "docker" and isinstance(merged.get(key), dict) and isinstance(value, dict):
+            merged[key] = _merge_docker_dicts(cast(dict[str, Any], merged[key]), value)
+        elif (
+            key == "check_commands"
+            and isinstance(merged.get(key), list)
+            and isinstance(value, list)
+        ):
+            merged[key] = _merge_check_commands(cast(list[object], merged[key]), value)
+        else:
+            merged[key] = deepcopy(value)
+    return merged
+
+
+def _merge_plain_dicts(base: dict[str, Any], override: dict[str, object]) -> dict[str, object]:
+    merged: dict[str, object] = deepcopy(base)
+    for key, value in override.items():
+        merged[key] = deepcopy(value)
+    return merged
+
+
+def _merge_docker_dicts(base: dict[str, Any], override: dict[str, object]) -> dict[str, object]:
+    merged: dict[str, object] = deepcopy(base)
+    if override.get("image"):
+        merged.pop("dockerfile", None)
+    if override.get("dockerfile"):
+        merged.pop("image", None)
+    for key, value in override.items():
+        if key == "env" and isinstance(merged.get(key), dict) and isinstance(value, dict):
+            merged[key] = _merge_plain_dicts(cast(dict[str, Any], merged[key]), value)
+        elif (
+            key == "env_from_host" and isinstance(merged.get(key), list) and isinstance(value, list)
+        ):
+            merged[key] = _merge_unique_lists(cast(list[object], merged[key]), value)
+        else:
+            merged[key] = deepcopy(value)
+    return merged
+
+
+def _merge_unique_lists(base: list[object], override: list[object]) -> list[object]:
+    merged: list[object] = deepcopy(base)
+    seen = set(base)
+    for item in override:
+        if item not in seen:
+            merged.append(deepcopy(item))
+            seen.add(item)
+    return merged
+
+
+def _merge_check_commands(base: list[object], override: list[object]) -> list[object]:
+    merged: list[object] = deepcopy(base)
+    positions = {
+        item["name"]: index
+        for index, item in enumerate(merged)
+        if isinstance(item, dict) and isinstance(item.get("name"), str)
+    }
+    for item in override:
+        if (
+            isinstance(item, dict)
+            and isinstance(item.get("name"), str)
+            and item["name"] in positions
+        ):
+            merged[positions[item["name"]]] = deepcopy(item)
+        else:
+            merged.append(deepcopy(item))
+    return merged

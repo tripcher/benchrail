@@ -102,6 +102,7 @@ That becomes the task queue for the run.
 A dataset is a directory containing:
 
 - a `manifest.json` file describing which agents to run
+- an optional `config.json` and `environment/` directory containing instance defaults
 - one subdirectory per benchmark instance
 
 ### Instance
@@ -120,15 +121,30 @@ Expected dataset shape:
 ```text
 <dataset>/
   manifest.json
+  config.json
+  environment/
+    Dockerfile
+    setup.sh
   <instance_id>/
     config.json
     environment/
+      Dockerfile
       setup.sh
       run-gold-tests.sh
       any_check.sh
     patches/
       test.patch
 ```
+
+Dataset `config.json` fields are inherited by each instance. Nested Docker environment
+values, hooks, and named check commands are merged, while explicit instance values override
+dataset defaults.
+
+Dataset `environment/` files are copied first, then instance `environment/` files are copied
+on top. For an inherited Dockerfile such as `"dockerfile": "environment/Dockerfile"`, the
+instance path is used when it exists; otherwise Benchrail falls back to the dataset path.
+An explicit instance `docker.image` overrides an inherited Dockerfile, and an explicit
+instance `docker.dockerfile` overrides an inherited image.
 
 Example included in this repository:
 

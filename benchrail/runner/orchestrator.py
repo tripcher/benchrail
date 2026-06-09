@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import FrameType
 
-from benchrail.dto.config import InstanceConfig
+from benchrail.dto.config import DatasetConfig, InstanceConfig, merge_dataset_config
 from benchrail.dto.manifest import AgentEntry, Manifest
 from benchrail.dto.result import InstanceResult, RunResult
 from benchrail.registry import AGENT_REGISTRY
@@ -56,9 +56,21 @@ def _load_manifest(dataset_path: Path) -> Manifest:
         raise ConfigError(f"Invalid manifest.json: {e}") from e
 
 
+def _load_dataset_config(dataset_path: Path) -> DatasetConfig | None:
+    config_file = dataset_path / "config.json"
+    if not config_file.exists():
+        return None
+    try:
+        data = _load_json_object(config_file)
+        return DatasetConfig.model_validate(data)
+    except Exception as e:
+        raise ConfigError(f"Invalid dataset config.json: {e}") from e
+
+
 def _discover_instances(dataset_path: Path) -> dict[str, InstanceConfig]:
     """Discover all instances in dataset and return {instance_id: InstanceConfig}."""
     instances: dict[str, InstanceConfig] = {}
+    dataset_config = _load_dataset_config(dataset_path)
     for item in sorted(dataset_path.iterdir()):
         if not item.is_dir():
             continue
@@ -66,9 +78,10 @@ def _discover_instances(dataset_path: Path) -> dict[str, InstanceConfig]:
         if not config_file.exists():
             continue
         try:
-            data = _load_json_object(config_file)
-            config = InstanceConfig.model_validate(data)
-            config.docker.resolve_dockerfile_path(item)
+            instance_data = _load_json_object(config_file)
+            merged_data = merge_dataset_config(dataset_config, instance_data)
+            config = InstanceConfig.model_validate(merged_data)
+            config.docker.resolve_dockerfile_path(item, dataset_path)
         except Exception as e:
             raise ConfigError(f"Invalid config.json in {item.name}: {e}") from e
 
@@ -126,7 +139,7 @@ def _build_task_queue(
         except ValueError as e:
             raise ConfigError(f"Instance {iid}: {e}") from e
         try:
-            config.docker.resolve_dockerfile_path(instance_dir)
+            config.docker.resolve_dockerfile_path(instance_dir, dataset_path)
         except ValueError as e:
             raise ConfigError(f"Instance {iid}: {e}") from e
 

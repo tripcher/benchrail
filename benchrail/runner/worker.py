@@ -191,7 +191,10 @@ def _bench_env_vars(
 
 def _resolve_dockerfile(spec: TaskSpec) -> Path | None:
     try:
-        return spec.instance_config.docker.resolve_dockerfile_path(spec.instance_dir)
+        return spec.instance_config.docker.resolve_dockerfile_path(
+            spec.instance_dir,
+            spec.instance_dir.parent,
+        )
     except ValueError as exc:
         raise _StepFailed(str(exc), "docker_build") from exc
 
@@ -526,8 +529,14 @@ def _run_local(
         env = _resolve_local_env()
         env.update(_bench_env_vars(spec, task_dir, repo_dir, bench_env_dir, "local"))
 
-        # Copy environment/
-        loc.copy_environment(spec.instance_dir / "environment", bench_env_dir)
+        # Copy dataset environment first, then overlay instance-specific files.
+        loc.copy_environment_layers(
+            [
+                spec.instance_dir.parent / "environment",
+                spec.instance_dir / "environment",
+            ],
+            bench_env_dir,
+        )
 
         _check_stop()
         _check_timeout()
@@ -816,10 +825,16 @@ def _run_docker(
         env.update(_bench_env_vars(spec, task_dir, Path("/bench/repo"), bench_env_dir, "docker"))
         env.update(docker_env)
 
-        # Copy environment/ to environment/ for hooks/checks runtime files.
-        from benchrail.runner.local import copy_environment
+        # Copy dataset environment first, then overlay instance-specific files.
+        from benchrail.runner.local import copy_environment_layers
 
-        copy_environment(spec.instance_dir / "environment", bench_env_dir)
+        copy_environment_layers(
+            [
+                spec.instance_dir.parent / "environment",
+                spec.instance_dir / "environment",
+            ],
+            bench_env_dir,
+        )
 
         _check_stop()
 

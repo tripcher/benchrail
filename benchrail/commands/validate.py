@@ -23,7 +23,7 @@ def validate_cmd(
     ] = Path("dataset"),
 ) -> None:
     """Validate dataset structure and all configuration files."""
-    from benchrail.dto.config import InstanceConfig
+    from benchrail.dto.config import DatasetConfig, InstanceConfig, merge_dataset_config
     from benchrail.dto.manifest import Manifest
     from benchrail.registry import AGENT_REGISTRY
 
@@ -40,12 +40,22 @@ def validate_cmd(
         raise typer.Exit(2)
 
     manifest: Manifest | None = None
+    dataset_config: DatasetConfig | None = None
     try:
         data = _load_json_object(manifest_file)
         manifest = Manifest.model_validate(data)
         typer.echo(f"  manifest.json  OK  ({len(manifest.agents)} agents)")
     except Exception as e:
         errors.append(f"manifest.json invalid: {e}")
+
+    dataset_config_file = dataset / "config.json"
+    if dataset_config_file.exists():
+        try:
+            data = _load_json_object(dataset_config_file)
+            dataset_config = DatasetConfig.model_validate(data)
+            typer.echo("  config.json  OK  (dataset defaults)")
+        except Exception as e:
+            errors.append(f"config.json invalid: {e}")
 
     if manifest:
         for agent in manifest.agents:
@@ -64,8 +74,9 @@ def validate_cmd(
 
         instance_count += 1
         try:
-            data = _load_json_object(config_file)
-            config = InstanceConfig.model_validate(data)
+            instance_data = _load_json_object(config_file)
+            merged_data = merge_dataset_config(dataset_config, instance_data)
+            config = InstanceConfig.model_validate(merged_data)
         except Exception as e:
             errors.append(f"{item.name}/config.json invalid: {e}")
             continue
@@ -80,7 +91,7 @@ def validate_cmd(
         except ValueError as e:
             errors.append(f"{item.name}: {e}")
         try:
-            config.docker.resolve_dockerfile_path(item)
+            config.docker.resolve_dockerfile_path(item, dataset)
         except ValueError as e:
             errors.append(f"{item.name}: {e}")
 

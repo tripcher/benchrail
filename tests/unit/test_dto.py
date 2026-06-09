@@ -6,7 +6,12 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from benchrail.dto.config import CheckCommand, InstanceConfig
+from benchrail.dto.config import (
+    CheckCommand,
+    DatasetConfig,
+    InstanceConfig,
+    merge_dataset_config,
+)
 from benchrail.dto.manifest import AgentEntry, Manifest
 from benchrail.dto.result import AgentStats, CheckResult, InstanceResult, RunResult
 
@@ -231,6 +236,201 @@ def test_instance_config_resolve_dockerfile_path_escape(tmp_path: Path) -> None:
     c = InstanceConfig.model_validate(data)
     with pytest.raises(ValueError, match="escape"):
         c.docker.resolve_dockerfile_path(tmp_path)
+
+
+def test_instance_config_resolve_dockerfile_prefers_instance_over_dataset(tmp_path: Path) -> None:
+    dataset_dir = tmp_path / "dataset"
+    instance_dir = dataset_dir / "task-1"
+    dataset_dockerfile = dataset_dir / "environment" / "Dockerfile"
+    instance_dockerfile = instance_dir / "environment" / "Dockerfile"
+    dataset_dockerfile.parent.mkdir(parents=True)
+    instance_dockerfile.parent.mkdir(parents=True)
+    dataset_dockerfile.write_text("FROM dataset\n", encoding="utf-8")
+    instance_dockerfile.write_text("FROM instance\n", encoding="utf-8")
+    config = InstanceConfig.model_validate(
+        {
+            "instance_id": "task-1",
+            "repo": "https://github.com/example/repo.git",
+            "base_commit": "abc123",
+            "prompt": "Fix",
+            "docker": {"dockerfile": "environment/Dockerfile"},
+            "check_commands": [{"name": "tests", "command": "make test", "timeout_sec": 60}],
+        }
+    )
+
+    assert config.docker.resolve_dockerfile_path(instance_dir, dataset_dir) == instance_dockerfile
+
+
+def test_instance_config_resolve_dockerfile_falls_back_to_dataset(tmp_path: Path) -> None:
+    dataset_dir = tmp_path / "dataset"
+    instance_dir = dataset_dir / "task-1"
+    dataset_dockerfile = dataset_dir / "environment" / "Dockerfile"
+    dataset_dockerfile.parent.mkdir(parents=True)
+    instance_dir.mkdir()
+    dataset_dockerfile.write_text("FROM dataset\n", encoding="utf-8")
+    config = InstanceConfig.model_validate(
+        {
+            "instance_id": "task-1",
+            "repo": "https://github.com/example/repo.git",
+            "base_commit": "abc123",
+            "prompt": "Fix",
+            "docker": {"dockerfile": "environment/Dockerfile"},
+            "check_commands": [{"name": "tests", "command": "make test", "timeout_sec": 60}],
+        }
+    )
+
+    assert config.docker.resolve_dockerfile_path(instance_dir, dataset_dir) == dataset_dockerfile
+
+
+def test_dataset_config_valid() -> None:
+    data = {
+        "instance_timeout_sec": 3600,
+        "hooks": {
+            "before_agent": {
+                "command": "sh setup.sh",
+                "timeout_sec": 1800,
+            }
+        },
+        "docker": {
+            "image": "benchrail-universal:latest",
+            "env_from_host": ["CODEX_API_KEY"],
+        },
+        "check_commands": [{"name": "tests", "command": "make test", "timeout_sec": 300}],
+    }
+    c = DatasetConfig.model_validate(data)
+    assert c.instance_timeout_sec == 3600
+    assert c.docker is not None
+    assert c.docker.image == "benchrail-universal:latest"
+
+
+def test_merge_dataset_config_merges_nested_fields() -> None:
+    dataset_config = DatasetConfig.model_validate(
+        {
+            "repo": "https://github.com/example/repo.git",
+            "base_commit": "abc123",
+            "instance_timeout_sec": 3600,
+            "hooks": {
+                "before_agent": {
+                    "command": "sh setup.sh",
+                    "timeout_sec": 1800,
+                }
+            },
+            "docker": {
+                "image": "benchrail-universal:latest",
+                "env": {"COMMON": "1"},
+                "env_from_host": ["CODEX_API_KEY"],
+            },
+            "check_commands": [
+                {"name": "gold_tests", "command": "make gold", "timeout_sec": 300},
+                {"name": "project_tests", "command": "make test", "timeout_sec": 300},
+            ],
+        }
+    )
+
+    merged = merge_dataset_config(
+        dataset_config,
+        {
+            "instance_id": "task-1",
+            "prompt": "Fix the bug",
+            "hooks": {
+                "before_checks": {
+                    "command": "sh verify.sh",
+                    "timeout_sec": 120,
+                }
+            },
+            "docker": {
+                "env": {"INSTANCE": "1"},
+                "env_from_host": ["OPENAI_API_KEY", "CODEX_API_KEY"],
+            },
+            "check_commands": [
+                {"name": "project_tests", "command": "pytest -q", "timeout_sec": 600},
+                {"name": "lint", "command": "ruff check .", "timeout_sec": 60},
+            ],
+        },
+    )
+
+    config = InstanceConfig.model_validate(merged)
+    assert config.repo == "https://github.com/example/repo.git"
+    assert config.base_commit == "abc123"
+    assert config.instance_timeout_sec == 3600
+    assert config.prompt == "Fix the bug"
+    assert config.hooks is not None
+    assert config.hooks.before_agent is not None
+    assert config.hooks.before_checks is not None
+    assert config.docker.env == {"COMMON": "1", "INSTANCE": "1"}
+    assert config.docker.env_from_host == ["CODEX_API_KEY", "OPENAI_API_KEY"]
+    assert [command.name for command in config.check_commands] == [
+        "gold_tests",
+        "project_tests",
+        "lint",
+    ]
+    assert config.check_commands[1].command == "pytest -q"
+
+
+def test_merge_dataset_config_allows_instance_override_of_scalar_fields() -> None:
+    dataset_config = DatasetConfig.model_validate(
+        {
+            "repo": "https://github.com/example/repo.git",
+            "base_commit": "abc123",
+            "prompt": "Base prompt",
+            "check_commands": [{"name": "tests", "command": "make test", "timeout_sec": 300}],
+        }
+    )
+
+    merged = merge_dataset_config(
+        dataset_config,
+        {
+            "instance_id": "task-1",
+            "repo": "https://github.com/example/other.git",
+            "prompt": "Instance prompt",
+        },
+    )
+
+    config = InstanceConfig.model_validate(merged)
+    assert config.repo == "https://github.com/example/other.git"
+    assert config.prompt == "Instance prompt"
+    assert config.base_commit == "abc123"
+
+
+@pytest.mark.parametrize(
+    ("dataset_docker", "instance_docker", "expected_image", "expected_dockerfile"),
+    [
+        (
+            {"image": "default:latest"},
+            {"dockerfile": "environment/Dockerfile"},
+            None,
+            "environment/Dockerfile",
+        ),
+        (
+            {"dockerfile": "environment/Dockerfile"},
+            {"image": "instance:latest"},
+            "instance:latest",
+            None,
+        ),
+    ],
+)
+def test_merge_dataset_config_instance_docker_strategy_overrides_default(
+    dataset_docker: dict[str, str],
+    instance_docker: dict[str, str],
+    expected_image: str | None,
+    expected_dockerfile: str | None,
+) -> None:
+    dataset_config = DatasetConfig.model_validate({"docker": dataset_docker})
+    merged = merge_dataset_config(
+        dataset_config,
+        {
+            "instance_id": "task-1",
+            "repo": "https://github.com/example/repo.git",
+            "base_commit": "abc123",
+            "prompt": "Fix",
+            "docker": instance_docker,
+            "check_commands": [{"name": "tests", "command": "make test", "timeout_sec": 60}],
+        },
+    )
+
+    config = InstanceConfig.model_validate(merged)
+    assert config.docker.image == expected_image
+    assert config.docker.dockerfile == expected_dockerfile
 
 
 # ─── Result models ───────────────────────────────────────────────────────────
