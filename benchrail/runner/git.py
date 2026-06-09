@@ -54,8 +54,8 @@ def _git_commit_in_base_history(
 def _git_commits_outside_base_history(
     git_runner: Callable[..., GitCommandResult], base_commit: str
 ) -> list[str]:
-    """Return commits referenced by refs that are not reachable from base_commit."""
-    result = git_runner("rev-list", "--all", "--not", base_commit)
+    """Return commits from verification-scope refs not reachable from base_commit."""
+    result = git_runner("rev-list", "--branches", "--tags", "--remotes", "--not", base_commit)
     return [line for line in result.stdout.decode().splitlines() if line]
 
 
@@ -141,6 +141,7 @@ def setup_and_cleanup_repository(
 
     _git_runner("reflog", "expire", "--expire=now", "--all", timeout=60)
     _git_runner("gc", "--prune=now", "--aggressive", timeout=300)
+    delete_cleanup_note_refs(_git_runner)
 
     outside_history = _git_commits_outside_base_history(_git_runner, base_commit)
     if outside_history:

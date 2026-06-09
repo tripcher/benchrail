@@ -163,8 +163,6 @@ def test_delete_cleanup_note_refs_removes_ai_note_refs(tmp_path: Path) -> None:
             stderr=result.stderr,
         )
 
-    assert _git_commits_outside_base_history(git_runner, base_commit) == [future_commit]
-
     delete_cleanup_note_refs(git_runner)
 
     assert _git(repo, "show-ref", "--verify", "refs/notes/ai", check=False).returncode != 0
@@ -172,6 +170,33 @@ def test_delete_cleanup_note_refs_removes_ai_note_refs(tmp_path: Path) -> None:
         _git(repo, "show-ref", "--verify", "refs/notes/ai-remote/origin", check=False).returncode
         != 0
     )
+    assert _git_commits_outside_base_history(git_runner, base_commit) == []
+
+
+def test_git_commits_outside_base_history_ignores_ai_note_refs(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.name", "Test User")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "commit.gpgsign", "false")
+
+    _make_commit(repo, "a.txt", "first", "2024-01-01T00:00:00+0000")
+    base_commit = _make_commit(repo, "a.txt", "second", "2024-01-02T00:00:00+0000")
+    future_commit = _make_commit(repo, "a.txt", "third", "2024-01-03T00:00:00+0000")
+    _git(repo, "update-ref", "refs/notes/ai", future_commit)
+    _git(repo, "update-ref", "refs/notes/ai-remote/origin", future_commit)
+    _git(repo, "reset", "--hard", base_commit)
+
+    def git_runner(*args: str) -> GitCommandResult:
+        result = _git(repo, *args, check=False)
+        return GitCommandResult(
+            exit_code=result.returncode,
+            duration_ms=0,
+            stdout=result.stdout,
+            stderr=result.stderr,
+        )
+
     assert _git_commits_outside_base_history(git_runner, base_commit) == []
 
 
