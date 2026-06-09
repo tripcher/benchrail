@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, TypedDict, cast
 
+from benchrail.runner.git import GitCommandResult, setup_and_cleanup_repository
 from benchrail.runner.logging_util import RunnerLogger, TruncatingWriter
 
 
@@ -351,6 +352,64 @@ def copy_file_to_container(
 ) -> None:
     runner._logger.info("CONTAINER_CP_FILE", src=str(src_file), dst=f"{dst_dir}/{dst_relpath}")
     _cp_file_to_container(runner._client, runner._container, src_file, dst_dir, dst_relpath)
+
+
+def setup_repository(
+    runner: DockerTaskRunner,
+    repo_url: str,
+    base_commit: str,
+    env: dict[str, str],
+    logs_dir: Path,
+    logger: RunnerLogger,
+    repo_dir: str = "/bench/repo",
+    clone_workdir: str = "/",
+) -> str | None:
+    """Clone and prepare a repository inside a task container."""
+
+    class _DockerGitExecutor:
+        def run(
+            self,
+            cmd: list[str],
+            *,
+            workdir: str | Path,
+            env: dict[str, str],
+            timeout: int,
+            stdout_path: Path,
+            stderr_path: Path,
+            event_name: str,
+            log_extra: Mapping[str, object] | None = None,
+        ) -> GitCommandResult:
+            result = runner.exec(
+                cmd,
+                workdir=str(workdir),
+                env=env,
+                timeout=timeout,
+                stdout_path=stdout_path,
+                stderr_path=stderr_path,
+                event_name=event_name,
+                log_extra=log_extra,
+            )
+            stdout = stdout_path.read_bytes() if stdout_path.exists() else b""
+            stderr = stderr_path.read_bytes() if stderr_path.exists() else b""
+            return GitCommandResult(
+                exit_code=result.exit_code,
+                duration_ms=result.duration_ms,
+                stdout=stdout,
+                stderr=stderr,
+                timed_out=result.timed_out,
+                stderr_tail=result.stderr_tail,
+            )
+
+    return setup_and_cleanup_repository(
+        repo_url=repo_url,
+        base_commit=base_commit,
+        repo_dir=repo_dir,
+        clone_workdir=clone_workdir,
+        env=env,
+        logs_dir=logs_dir,
+        logger=logger,
+        executor=_DockerGitExecutor(),
+    )
 
 
 def apply_patch(

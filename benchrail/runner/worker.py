@@ -16,6 +16,7 @@ from benchrail.dto.config import InstanceConfig
 from benchrail.dto.manifest import AgentEntry
 from benchrail.dto.result import AgentStats, CheckResult, InstanceResult
 from benchrail.registry import build_adapter
+from benchrail.runner.environment import copy_environment_layers
 from benchrail.runner.logging_util import ConsoleOutput, RunnerLogger
 
 
@@ -530,7 +531,7 @@ def _run_local(
         env.update(_bench_env_vars(spec, task_dir, repo_dir, bench_env_dir, "local"))
 
         # Copy dataset environment first, then overlay instance-specific files.
-        loc.copy_environment_layers(
+        copy_environment_layers(
             [
                 spec.instance_dir.parent / "environment",
                 spec.instance_dir / "environment",
@@ -826,8 +827,6 @@ def _run_docker(
         env.update(docker_env)
 
         # Copy dataset environment first, then overlay instance-specific files.
-        from benchrail.runner.local import copy_environment_layers
-
         copy_environment_layers(
             [
                 spec.instance_dir.parent / "environment",
@@ -874,37 +873,16 @@ def _run_docker(
         if docker_runner is None:
             raise _StepFailed("container create/start failed", "docker_start")
 
-        # Clone inside container
-        r = docker_runner.exec(
-            ["git", "clone", spec.instance_config.repo, "/bench/repo"],
-            workdir="/",
+        err = dk.setup_repository(
+            docker_runner,
+            repo_url=spec.instance_config.repo,
+            base_commit=spec.instance_config.base_commit,
             env=env,
-            timeout=600,
-            stdout_path=logs_dir / "clone.stdout",
-            stderr_path=logs_dir / "clone.stderr",
-            event_name="CLONE",
-            log_extra={"repo": spec.instance_config.repo},
+            logs_dir=logs_dir,
+            logger=task_logger,
         )
-        if r.exit_code != 0 or r.timed_out:
-            raise _StepFailed("clone failed", "clone", r.exit_code)
-
-        # Git cleanup inside container
-        cleanup_cmds = [
-            ["git", "reset", "--hard", spec.instance_config.base_commit],
-            ["git", "remote", "remove", "origin"],
-            ["git", "reflog", "expire", "--expire=now", "--all"],
-            ["git", "gc", "--prune=now", "--aggressive"],
-        ]
-        for cmd in cleanup_cmds:
-            docker_runner.exec(
-                cmd,
-                workdir="/bench/repo",
-                env=env,
-                timeout=300,
-                stdout_path=logs_dir / "clone.stdout",
-                stderr_path=logs_dir / "clone.stderr",
-                event_name="CLEANUP",
-            )
+        if err:
+            raise _StepFailed(err, "clone", exit_code=1)
 
         _check_stop()
         _check_timeout()
@@ -912,14 +890,13 @@ def _run_docker(
         # Apply prepare_patch
         prepare_path, test_path = spec.instance_config.resolve_patch_paths(spec.instance_dir)
         if prepare_path:
-            r = docker_runner.exec(
-                ["git", "apply", "/bench/patches/prepare.patch"],
-                workdir="/bench/repo",
-                env=env,
-                timeout=60,
-                stdout_path=logs_dir / "prepare_patch.stdout",
-                stderr_path=logs_dir / "prepare_patch.stderr",
-                event_name="PREPARE_PATCH",
+            r = dk.apply_patch(
+                docker_runner,
+                "/bench/patches/prepare.patch",
+                "/bench/repo",
+                env,
+                logs_dir,
+                "prepare_patch",
             )
             if r.exit_code != 0:
                 raise _StepFailed("prepare_patch failed", "prepare_patch", r.exit_code)

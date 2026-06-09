@@ -7,6 +7,7 @@ from typing import cast
 import pytest
 
 from benchrail.runner import docker as docker_runner
+from benchrail.runner.git import GitExecutor
 from benchrail.runner.logging_util import RunnerLogger
 
 
@@ -231,6 +232,131 @@ def test_runner_exec_reports_container_side_timeout(tmp_path: Path) -> None:
         "exec_create",
         ["timeout", "--kill-after=5s", "3s", "bash", "--login", "-lc", "sleep 10"],
     )
+
+
+def test_setup_repository_delegates_to_shared_git_facade(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    events: list[tuple[str, object]] = []
+    fake_client = _FakeClient(events)
+    logger = RunnerLogger(tmp_path / "runner.log")
+    runner = docker_runner.DockerTaskRunner(
+        cast(docker_runner._DockerClient, fake_client),
+        _FakeContainer(events),
+        "image:latest",
+        logger,
+    )
+    captured: dict[str, object] = {}
+
+    def fake_setup_and_cleanup_repository(
+        *,
+        repo_url: str,
+        base_commit: str,
+        repo_dir: str | Path,
+        clone_workdir: str | Path,
+        env: dict[str, str],
+        logs_dir: Path,
+        logger: RunnerLogger,
+        executor: GitExecutor,
+    ) -> str | None:
+        captured.update(
+            {
+                "repo_url": repo_url,
+                "base_commit": base_commit,
+                "repo_dir": repo_dir,
+                "clone_workdir": clone_workdir,
+            }
+        )
+        executor.run(
+            ["git", "status"],
+            workdir=repo_dir,
+            env=env,
+            timeout=30,
+            stdout_path=logs_dir / "status.stdout",
+            stderr_path=logs_dir / "status.stderr",
+            event_name="GIT_STATUS",
+            log_extra={"source": "test"},
+        )
+        return None
+
+    monkeypatch.setattr(
+        docker_runner,
+        "setup_and_cleanup_repository",
+        fake_setup_and_cleanup_repository,
+    )
+
+    err = docker_runner.setup_repository(
+        runner,
+        repo_url="https://github.com/example/repo.git",
+        base_commit="abc123",
+        env={"TEST": "1"},
+        logs_dir=tmp_path,
+        logger=logger,
+    )
+
+    assert err is None
+    assert captured == {
+        "repo_url": "https://github.com/example/repo.git",
+        "base_commit": "abc123",
+        "repo_dir": "/bench/repo",
+        "clone_workdir": "/",
+    }
+    assert events[0] == (
+        "exec_create",
+        [
+            "timeout",
+            "--kill-after=5s",
+            "30s",
+            "bash",
+            "--login",
+            "-lc",
+            "git status",
+        ],
+    )
+
+
+def test_apply_patch_runs_precheck_before_apply(tmp_path: Path) -> None:
+    events: list[tuple[str, object]] = []
+    fake_client = _FakeClient(events)
+    logger = RunnerLogger(tmp_path / "runner.log")
+    runner = docker_runner.DockerTaskRunner(
+        cast(docker_runner._DockerClient, fake_client),
+        _FakeContainer(events),
+        "image:latest",
+        logger,
+    )
+
+    result = docker_runner.apply_patch(
+        runner,
+        "/bench/patches/prepare.patch",
+        "/bench/repo",
+        {},
+        tmp_path,
+        "prepare_patch",
+    )
+
+    assert result.exit_code == 0
+    exec_commands = [event[1] for event in events if event[0] == "exec_create"]
+    assert exec_commands == [
+        [
+            "timeout",
+            "--kill-after=5s",
+            "60s",
+            "bash",
+            "--login",
+            "-lc",
+            "git apply --check /bench/patches/prepare.patch",
+        ],
+        [
+            "timeout",
+            "--kill-after=5s",
+            "60s",
+            "bash",
+            "--login",
+            "-lc",
+            "git apply /bench/patches/prepare.patch",
+        ],
+    ]
 
 
 def test_build_image_closes_logs_and_client(

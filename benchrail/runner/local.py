@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from io import BufferedReader
 from pathlib import Path
 
+from benchrail.runner.git import GitCommandResult, setup_and_cleanup_repository
 from benchrail.runner.logging_util import RunnerLogger, TruncatingWriter
 
 
@@ -120,41 +120,6 @@ def run_command(
         stderr_w.close()
 
 
-def copy_environment(src_dir: Path, dst_dir: Path) -> None:
-    """Copy all files from src_dir to dst_dir."""
-    if not src_dir.exists():
-        return
-    dst_dir.mkdir(parents=True, exist_ok=True)
-    for item in src_dir.iterdir():
-        dst = dst_dir / item.name
-        if item.is_dir():
-            shutil.copytree(item, dst, dirs_exist_ok=True)
-        else:
-            shutil.copy2(item, dst)
-
-
-def copy_environment_layers(src_dirs: list[Path], dst_dir: Path) -> None:
-    """Copy environment directories in order, letting later sources replace earlier files."""
-    for src_dir in src_dirs:
-        copy_environment(src_dir, dst_dir)
-
-
-def _git_commit_in_base_history(
-    git_runner: Callable[..., subprocess.CompletedProcess[bytes]], commit: str, base_commit: str
-) -> bool:
-    """Return whether commit is base_commit or one of its ancestors."""
-    result = git_runner("merge-base", "--is-ancestor", commit, base_commit)
-    return result.returncode == 0
-
-
-def _git_commits_outside_base_history(
-    git_runner: Callable[..., subprocess.CompletedProcess[bytes]], base_commit: str
-) -> list[str]:
-    """Return commits referenced by refs that are not reachable from base_commit."""
-    result = git_runner("rev-list", "--all", "--not", base_commit)
-    return [line for line in result.stdout.decode().splitlines() if line]
-
-
 def setup_repository(
     repo_url: str,
     base_commit: str,
@@ -166,70 +131,51 @@ def setup_repository(
 ) -> str | None:
     """Clone and prepare repository. Returns error message or None on success."""
 
-    # Clone
-    clone_result = run_command(
-        ["git", "clone", repo_url, str(repo_dir)],
-        cwd=parent_dir,
+    class _LocalGitExecutor:
+        def run(
+            self,
+            cmd: list[str],
+            *,
+            workdir: str | Path,
+            env: dict[str, str],
+            timeout: int,
+            stdout_path: Path,
+            stderr_path: Path,
+            event_name: str,
+            log_extra: Mapping[str, object] | None = None,
+        ) -> GitCommandResult:
+            result = run_command(
+                cmd,
+                cwd=Path(workdir),
+                env=env,
+                timeout=timeout,
+                stdout_path=stdout_path,
+                stderr_path=stderr_path,
+                logger=logger,
+                event_name=event_name,
+                log_extra=log_extra,
+            )
+            stdout = stdout_path.read_bytes() if stdout_path.exists() else b""
+            stderr = stderr_path.read_bytes() if stderr_path.exists() else b""
+            return GitCommandResult(
+                exit_code=result.exit_code,
+                duration_ms=result.duration_ms,
+                stdout=stdout,
+                stderr=stderr,
+                timed_out=result.timed_out,
+                stderr_tail=result.stderr_tail,
+            )
+
+    return setup_and_cleanup_repository(
+        repo_url=repo_url,
+        base_commit=base_commit,
+        repo_dir=repo_dir,
+        clone_workdir=parent_dir,
         env=env,
-        timeout=600,
-        stdout_path=logs_dir / "clone.stdout",
-        stderr_path=logs_dir / "clone.stderr",
+        logs_dir=logs_dir,
         logger=logger,
-        event_name="CLONE",
-        log_extra={"repo": repo_url, "commit": base_commit},
+        executor=_LocalGitExecutor(),
     )
-    if clone_result.exit_code != 0 or clone_result.timed_out:
-        return f"clone failed (exit_code={clone_result.exit_code})"
-
-    def _git(*args: str, timeout: int = 120) -> subprocess.CompletedProcess[bytes]:
-        return subprocess.run(
-            ["git", *args],
-            cwd=str(repo_dir),
-            env=env,
-            capture_output=True,
-            timeout=timeout,
-        )
-
-    logger.info("CLEANUP_START")
-    cleanup_start = time.monotonic()
-
-    # Reset to base_commit
-    r = _git("reset", "--hard", base_commit)
-    if r.returncode != 0:
-        err = r.stderr.decode("utf-8", errors="replace")[:500]
-        logger.error("CLEANUP_FAILED", step="reset", stderr_tail=err)
-        return f"git reset failed: {err}"
-
-    # Remove origin
-    _git("remote", "remove", "origin")
-
-    # Delete tags that point outside base_commit history.
-    r = _git("tag", "-l")
-    tags = [t for t in r.stdout.decode().strip().splitlines() if t]
-    for tag in tags:
-        r2 = _git("rev-list", "-n", "1", tag)
-        tag_commit = r2.stdout.decode().strip()
-        if tag_commit and not _git_commit_in_base_history(_git, tag_commit, base_commit):
-            _git("tag", "-d", tag)
-
-    # Expire reflog and gc
-    _git("reflog", "expire", "--expire=now", "--all", timeout=60)
-    _git("gc", "--prune=now", "--aggressive", timeout=300)
-
-    # Verify refs expose only base_commit and its ancestors.
-    outside_history = _git_commits_outside_base_history(_git, base_commit)
-    if outside_history:
-        logger.error(
-            "CLEANUP_FAILED",
-            step="verify",
-            detail="commits found after base_commit",
-            commit_sample=outside_history[0],
-        )
-        return "git cleanup verification failed: commits found after base_commit"
-
-    cleanup_ms = int((time.monotonic() - cleanup_start) * 1000)
-    logger.info("CLEANUP_END", duration_ms=cleanup_ms, exit_code=0)
-    return None
 
 
 def apply_patch(

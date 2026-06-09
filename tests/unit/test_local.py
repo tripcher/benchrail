@@ -2,12 +2,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from benchrail.runner.local import (
-    _git_commit_in_base_history,
-    _git_commits_outside_base_history,
-    apply_patch,
-    copy_environment_layers,
-)
+from benchrail.runner.local import apply_patch
 from benchrail.runner.logging_util import RunnerLogger
 
 
@@ -27,57 +22,6 @@ def _git(
         check=check,
         capture_output=True,
     )
-
-
-def _make_commit(repo: Path, name: str, content: str, commit_time: str) -> str:
-    (repo / name).write_text(content)
-    env = {
-        "GIT_AUTHOR_DATE": commit_time,
-        "GIT_COMMITTER_DATE": commit_time,
-    }
-    _git(repo, "add", name, env=env)
-    _git(repo, "commit", "-m", content, env=env)
-    return _git(repo, "rev-parse", "HEAD").stdout.decode().strip()
-
-
-def test_git_commits_outside_base_history_is_empty_for_linear_history(tmp_path: Path) -> None:
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _git(repo, "init", "-b", "main")
-    _git(repo, "config", "user.name", "Test User")
-    _git(repo, "config", "user.email", "test@example.com")
-    _git(repo, "config", "commit.gpgsign", "false")
-
-    _make_commit(repo, "a.txt", "first", "2024-01-01T00:00:00+0000")
-    _make_commit(repo, "a.txt", "second", "2024-01-02T00:00:00+0000")
-    base_commit = _make_commit(repo, "a.txt", "third", "2024-01-03T00:00:00+0000")
-
-    def git_runner(*args: str) -> subprocess.CompletedProcess[bytes]:
-        return _git(repo, *args, check=False)
-
-    assert _git_commit_in_base_history(git_runner, base_commit, base_commit) is True
-    assert _git_commits_outside_base_history(git_runner, base_commit) == []
-
-
-def test_git_commits_outside_base_history_detects_future_tag_after_reset(tmp_path: Path) -> None:
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _git(repo, "init", "-b", "main")
-    _git(repo, "config", "user.name", "Test User")
-    _git(repo, "config", "user.email", "test@example.com")
-    _git(repo, "config", "commit.gpgsign", "false")
-
-    _make_commit(repo, "a.txt", "first", "2024-01-01T00:00:00+0000")
-    base_commit = _make_commit(repo, "a.txt", "second", "2024-01-02T00:00:00+0000")
-    future_commit = _make_commit(repo, "a.txt", "third", "2024-01-03T00:00:00+0000")
-    _git(repo, "tag", "future-tag", future_commit)
-    _git(repo, "reset", "--hard", base_commit)
-
-    def git_runner(*args: str) -> subprocess.CompletedProcess[bytes]:
-        return _git(repo, *args, check=False)
-
-    assert _git_commit_in_base_history(git_runner, future_commit, base_commit) is False
-    assert _git_commits_outside_base_history(git_runner, base_commit) == [future_commit]
 
 
 def test_apply_patch_logs_precheck_failure_on_conflict(tmp_path: Path) -> None:
@@ -127,29 +71,3 @@ def test_apply_patch_logs_precheck_failure_on_conflict(tmp_path: Path) -> None:
     runner_log = (tmp_path / "runner.log").read_text(encoding="utf-8")
     assert "TEST_PATCH_CHECK_FAILED" in runner_log
     assert "TEST_PATCH_PRECHECK_FAILED" in runner_log
-
-
-def test_copy_environment_layers_overlays_instance_on_dataset(tmp_path: Path) -> None:
-    dataset_env = tmp_path / "dataset" / "environment"
-    instance_env = tmp_path / "dataset" / "task-1" / "environment"
-    dst_env = tmp_path / "workspace" / "environment"
-
-    dataset_env.mkdir(parents=True)
-    instance_env.mkdir(parents=True)
-
-    (dataset_env / "shared.txt").write_text("dataset\n", encoding="utf-8")
-    (dataset_env / "dataset-only.txt").write_text("keep\n", encoding="utf-8")
-    (dataset_env / "scripts").mkdir()
-    (dataset_env / "scripts" / "setup.sh").write_text("echo dataset\n", encoding="utf-8")
-
-    (instance_env / "shared.txt").write_text("instance\n", encoding="utf-8")
-    (instance_env / "instance-only.txt").write_text("add\n", encoding="utf-8")
-    (instance_env / "scripts" / "setup.sh").parent.mkdir()
-    (instance_env / "scripts" / "setup.sh").write_text("echo instance\n", encoding="utf-8")
-
-    copy_environment_layers([dataset_env, instance_env], dst_env)
-
-    assert (dst_env / "shared.txt").read_text(encoding="utf-8") == "instance\n"
-    assert (dst_env / "dataset-only.txt").read_text(encoding="utf-8") == "keep\n"
-    assert (dst_env / "instance-only.txt").read_text(encoding="utf-8") == "add\n"
-    assert (dst_env / "scripts" / "setup.sh").read_text(encoding="utf-8") == "echo instance\n"
