@@ -15,6 +15,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  packages: write
 
 concurrency:
   group: release
@@ -23,6 +25,8 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.bump.outputs.tag }}
     steps:
       - name: Require main branch
         if: github.ref_name != 'main'
@@ -94,10 +98,21 @@ jobs:
           git push origin HEAD:main
           git push origin "${{ steps.bump.outputs.tag }}"
 
+  publish:
+    needs: release
+    uses: ./.github/workflows/publish.yml
+    with:
+      tag: ${{ needs.release.outputs.tag }}
+    secrets: inherit
+
+  create-github-release:
+    needs: [release, publish]
+    runs-on: ubuntu-latest
+    steps:
       - name: Create GitHub release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${{ steps.bump.outputs.tag }}" \
-            --title "${{ steps.bump.outputs.tag }}" \
-            --notes "Release ${{ steps.bump.outputs.tag }}"
+          gh release create "${{ needs.release.outputs.tag }}" \
+            --title "${{ needs.release.outputs.tag }}" \
+            --notes "Release ${{ needs.release.outputs.tag }}"
