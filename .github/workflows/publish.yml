@@ -1,31 +1,149 @@
-name: Publish to PyPI
+name: Release
 
 on:
-  workflow_call:
-    inputs:
-      tag:
-        description: Release tag to publish
-        required: true
-        type: string
   workflow_dispatch:
     inputs:
-      tag:
-        description: Release tag to publish
+      bump:
+        description: "Semantic version bump type for a new release, or none to publish an existing tag"
         required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+          - none
+      tag:
+        description: "Existing tag to publish when bump is none (example: v0.2.1)"
+        required: false
         type: string
-
-env:
-  RELEASE_TAG: ${{ inputs.tag }}
 
 permissions:
   id-token: write
-  contents: read
+  contents: write
   packages: write
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
+  prepare-release:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - name: Validate inputs
+        env:
+          BUMP: ${{ inputs.bump }}
+          TAG_INPUT: ${{ inputs.tag }}
+        run: |
+          if [ "${BUMP}" = "none" ] && [ -z "${TAG_INPUT}" ]; then
+            echo "Provide tag when bump is none."
+            exit 1
+          fi
+
+          if [ "${BUMP}" != "none" ] && [ -n "${TAG_INPUT}" ]; then
+            echo "Use either bump for a new release or tag for an existing release, not both."
+            exit 1
+          fi
+
+      - name: Require main branch for new releases
+        if: inputs.bump != 'none' && github.ref_name != 'main'
+        run: |
+          echo "Run new releases from the main branch."
+          exit 1
+
+      - name: Checkout
+        if: inputs.bump != 'none'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        if: inputs.bump != 'none'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Bump version
+        if: inputs.bump != 'none'
+        id: bump
+        run: |
+          python - <<'PY'
+          import re
+          from pathlib import Path
+
+          bump = "${{ inputs.bump }}"
+          path = Path("benchrail/__init__.py")
+          text = path.read_text()
+          match = re.search(r'__version__ = "(\d+)\.(\d+)\.(\d+)"', text)
+          if match is None:
+              raise SystemExit("Unable to locate __version__ in benchrail/__init__.py")
+
+          major, minor, patch = (int(part) for part in match.groups())
+          if bump == "major":
+              major, minor, patch = major + 1, 0, 0
+          elif bump == "minor":
+              minor, patch = minor + 1, 0
+          elif bump == "patch":
+              patch += 1
+          else:
+              raise SystemExit(f"Unsupported bump type: {bump}")
+
+          version = f"{major}.{minor}.{patch}"
+          path.write_text(
+              re.sub(
+                  r'__version__ = "\d+\.\d+\.\d+"',
+                  f'__version__ = "{version}"',
+                  text,
+              )
+          )
+          Path("/tmp/benchrail_version").write_text(version)
+          PY
+
+          version="$(cat /tmp/benchrail_version)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Commit version bump
+        if: inputs.bump != 'none'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add benchrail/__init__.py pyproject.toml
+          git commit -m "Release ${{ steps.bump.outputs.tag }} [skip ci]"
+
+      - name: Create git tag
+        if: inputs.bump != 'none'
+        run: git tag "${{ steps.bump.outputs.tag }}"
+
+      - name: Push commit and tag
+        if: inputs.bump != 'none'
+        run: |
+          git push origin HEAD:main
+          git push origin "${{ steps.bump.outputs.tag }}"
+
+      - name: Resolve release tag
+        id: resolve
+        env:
+          TAG_INPUT: ${{ inputs.tag }}
+          BUMP_TAG: ${{ steps.bump.outputs.tag }}
+        run: |
+          if [ -n "${TAG_INPUT}" ]; then
+            tag="${TAG_INPUT}"
+          else
+            tag="${BUMP_TAG}"
+          fi
+
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
   publish-pypi:
+    needs: prepare-release
     runs-on: ubuntu-latest
     environment: pypi
+    env:
+      RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -57,11 +175,15 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          attestations: true
 
   publish-docker:
-    needs: publish-pypi
+    needs: [prepare-release, publish-pypi]
     name: Publish Docker (${{ matrix.image_name }} ${{ matrix.platform }})
     runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
     strategy:
       fail-fast: false
       matrix:
@@ -141,9 +263,11 @@ jobs:
           retention-days: 1
 
   publish-docker-manifest:
-    needs: publish-docker
+    needs: [prepare-release, publish-docker]
     name: Publish Docker manifest (${{ matrix.image_name }})
     runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
     strategy:
       fail-fast: false
       matrix:
@@ -195,3 +319,20 @@ jobs:
 
       - name: Inspect published manifest
         run: docker buildx imagetools inspect ghcr.io/${{ github.repository_owner }}/${{ matrix.image_repository }}:${{ env.RELEASE_TAG }}
+
+  create-github-release:
+    needs: [prepare-release, publish-docker-manifest]
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
+    steps:
+      - name: Create or confirm GitHub release
+        run: |
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "GitHub release ${RELEASE_TAG} already exists."
+          else
+            gh release create "${RELEASE_TAG}" \
+              --title "${RELEASE_TAG}" \
+              --notes "Release ${RELEASE_TAG}"
+          fi
