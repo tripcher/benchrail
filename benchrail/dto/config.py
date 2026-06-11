@@ -123,6 +123,7 @@ class InstanceConfig(BaseModel):
     hooks: HooksConfig | None = None
     prepare_patch_path: str | None = None
     test_patch_path: str | None = None
+    expected_migration_json_path: str | None = None
     prompt: str
     docker: DockerConfig = Field(default_factory=DockerConfig)
     check_commands: list[CheckCommand]
@@ -159,11 +160,36 @@ class InstanceConfig(BaseModel):
 
     def resolve_patch_paths(self, instance_dir: Path) -> tuple[Path | None, Path | None]:
         """Resolve and validate patch paths relative to instance dir."""
-        prepare = self._resolve_patch(self.prepare_patch_path, instance_dir, "prepare_patch_path")
-        test = self._resolve_patch(self.test_patch_path, instance_dir, "test_patch_path")
+        prepare = self._resolve_instance_file(
+            self.prepare_patch_path,
+            instance_dir,
+            "prepare_patch_path",
+        )
+        test = self._resolve_instance_file(
+            self.test_patch_path,
+            instance_dir,
+            "test_patch_path",
+        )
         return prepare, test
 
-    def _resolve_patch(self, rel_path: str | None, instance_dir: Path, field: str) -> Path | None:
+    def resolve_expected_migration_json_path(self, instance_dir: Path) -> Path | None:
+        if self.expected_migration_json_path:
+            return self._resolve_instance_file(
+                self.expected_migration_json_path,
+                instance_dir,
+                "expected_migration_json_path",
+            )
+        default_path = instance_dir / "expected_migration.json"
+        if default_path.exists():
+            return default_path.resolve()
+        return None
+
+    def _resolve_instance_file(
+        self,
+        rel_path: str | None,
+        instance_dir: Path,
+        field: str,
+    ) -> Path | None:
         if not rel_path:
             return None
         resolved = (instance_dir / rel_path).resolve()
@@ -184,6 +210,7 @@ class DatasetConfig(BaseModel):
     hooks: HooksConfig | None = None
     prepare_patch_path: str | None = None
     test_patch_path: str | None = None
+    expected_migration_json_path: str | None = None
     prompt: str | None = None
     docker: DockerConfig | None = None
     check_commands: list[CheckCommand] | None = None

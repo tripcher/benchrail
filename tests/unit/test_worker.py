@@ -1,3 +1,5 @@
+import os
+import subprocess
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,6 +19,9 @@ from benchrail.runner.worker import (
     _log_patch_context,
     _parse_patch_touched_files,
     _resolve_docker_env,
+    _snapshot_agent_patch_baseline_local,
+    _snapshot_agent_patch_local,
+    _write_expected_migration_diff,
 )
 
 
@@ -47,6 +52,16 @@ class _FakeConsole:
 
     def print(self, msg: str) -> None:
         self.messages.append(msg)
+
+
+def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        env=os.environ.copy(),
+        check=True,
+        capture_output=True,
+    )
 
 
 def test_agent_runtime_env_maps_codex_version() -> None:
@@ -311,6 +326,133 @@ diff --git a/src/app.py b/src/app.py
     assert "TEST_PATCH_CONTEXT" in log_text
     assert "TEST_PATCH_OVERLAP" in log_text
     assert "tests/test_a.py" in log_text
+
+
+def test_snapshot_agent_patch_local_excludes_pre_agent_environment_changes(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.name", "Test User")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "commit.gpgsign", "false")
+    (repo / "app.py").write_text("value = 'base'\n", encoding="utf-8")
+    _git(repo, "add", "app.py")
+    _git(repo, "commit", "-m", "base")
+
+    spec = TaskSpec(
+        instance_id="task-1",
+        agent_entry=AgentEntry(id="codex-test", agent="codex", version="latest"),
+        instance_config=InstanceConfig.model_validate(
+            {
+                "instance_id": "task-1",
+                "repo": "https://github.com/example/repo.git",
+                "base_commit": "abc123",
+                "prompt": "Fix the bug",
+                "check_commands": [{"name": "tests", "command": "make test", "timeout_sec": 300}],
+            }
+        ),
+        instance_dir=tmp_path / "dataset" / "task-1",
+        workspace_root=tmp_path / "workspace",
+        output_root=None,
+        logs_root=tmp_path / "logs",
+        run_id="run-1",
+        mode="local",
+        auth_session=False,
+        stop_flag=threading.Event(),
+    )
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir()
+    task_logger = RunnerLogger(tmp_path / "runner.log")
+    try:
+        (repo / "app.py").write_text("value = 'prepared'\n", encoding="utf-8")
+        (repo / "setup_only.txt").write_text("from before_agent\n", encoding="utf-8")
+
+        baseline = _snapshot_agent_patch_baseline_local(
+            repo,
+            os.environ.copy(),
+            logs_dir,
+            task_logger,
+        )
+        assert baseline is not None
+
+        (repo / "app.py").write_text("value = 'agent'\n", encoding="utf-8")
+        (repo / "agent_only.txt").write_text("from agent\n", encoding="utf-8")
+
+        _snapshot_agent_patch_local(
+            spec,
+            repo,
+            os.environ.copy(),
+            logs_dir,
+            task_logger,
+            baseline,
+        )
+    finally:
+        task_logger.close()
+
+    patch_text = (
+        spec.workspace_root / spec.run_id / spec.agent_entry.id / spec.instance_id / "agent.patch"
+    ).read_text(encoding="utf-8")
+    assert "setup_only.txt" not in patch_text
+    assert "agent_only.txt" in patch_text
+    assert "-value = 'prepared'" in patch_text
+    assert "+value = 'agent'" in patch_text
+
+
+def test_write_expected_migration_diff_writes_artifact_in_result_dir(tmp_path: Path) -> None:
+    spec = TaskSpec(
+        instance_id="task-1",
+        agent_entry=AgentEntry(id="codex-test", agent="codex", version="latest"),
+        instance_config=InstanceConfig.model_validate(
+            {
+                "instance_id": "task-1",
+                "repo": "https://github.com/example/repo.git",
+                "base_commit": "abc123",
+                "prompt": "Fix the bug",
+                "docker": {"image": "benchrail-universal:latest"},
+                "check_commands": [{"name": "tests", "command": "make test", "timeout_sec": 300}],
+            }
+        ),
+        instance_dir=tmp_path / "dataset" / "task-1",
+        workspace_root=tmp_path / "workspace",
+        output_root=None,
+        logs_root=tmp_path / "logs",
+        run_id="run-1",
+        mode="local",
+        auth_session=False,
+        stop_flag=threading.Event(),
+    )
+    spec.instance_dir.mkdir(parents=True)
+    (spec.instance_dir / "expected_migration.json").write_text(
+        '{\n  "migration": "expected"\n}\n',
+        encoding="utf-8",
+    )
+    result_dir = spec.workspace_root / spec.run_id / spec.agent_entry.id / spec.instance_id
+    result_dir.mkdir(parents=True)
+    (result_dir / "agent.patch").write_text(
+        """diff --git a/migration.json b/migration.json
+new file mode 100644
+--- /dev/null
++++ b/migration.json
+@@ -0,0 +1,3 @@
++{
++  "migration": "actual"
++}
+""".replace("++++", "+++"),
+        encoding="utf-8",
+    )
+    logger = RunnerLogger(tmp_path / "runner.log")
+    try:
+        _write_expected_migration_diff(spec, logger)
+    finally:
+        logger.close()
+
+    diff_path = result_dir / "expected_migration_vs_agent_patch.diff"
+    assert diff_path.exists()
+    diff_text = diff_path.read_text(encoding="utf-8")
+    assert "--- expected_migration.json" in diff_text
+    assert "+++ agent.patch" in diff_text
+    assert '"migration": "expected"' in diff_text
+    assert '"migration": "actual"' in diff_text
 
 
 def test_emit_task_runner_log_prints_full_log(tmp_path: Path) -> None:

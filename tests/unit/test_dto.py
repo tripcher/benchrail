@@ -210,6 +210,51 @@ def test_instance_config_resolve_patch_paths_escape(tmp_path: Path) -> None:
         c.resolve_patch_paths(tmp_path)
 
 
+def test_instance_config_resolve_expected_migration_json_path_missing(tmp_path: Path) -> None:
+    data = {
+        "instance_id": "task-1",
+        "repo": "https://github.com/example/repo.git",
+        "base_commit": "abc123",
+        "prompt": "Fix",
+        "check_commands": [{"name": "tests", "command": "make test", "timeout_sec": 60}],
+        "expected_migration_json_path": "expected/migration.json",
+    }
+    c = InstanceConfig.model_validate(data)
+    with pytest.raises(ValueError, match="file not found"):
+        c.resolve_expected_migration_json_path(tmp_path)
+
+
+def test_instance_config_resolve_expected_migration_json_path_escape(tmp_path: Path) -> None:
+    data = {
+        "instance_id": "task-1",
+        "repo": "https://github.com/example/repo.git",
+        "base_commit": "abc123",
+        "prompt": "Fix",
+        "check_commands": [{"name": "tests", "command": "make test", "timeout_sec": 60}],
+        "expected_migration_json_path": "../../migration.json",
+    }
+    c = InstanceConfig.model_validate(data)
+    with pytest.raises(ValueError, match="escape"):
+        c.resolve_expected_migration_json_path(tmp_path)
+
+
+def test_instance_config_resolve_expected_migration_json_path_uses_default_file(
+    tmp_path: Path,
+) -> None:
+    default_path = tmp_path / "expected_migration.json"
+    default_path.write_text('{"version": 1}\n', encoding="utf-8")
+    data = {
+        "instance_id": "task-1",
+        "repo": "https://github.com/example/repo.git",
+        "base_commit": "abc123",
+        "prompt": "Fix",
+        "check_commands": [{"name": "tests", "command": "make test", "timeout_sec": 60}],
+    }
+    c = InstanceConfig.model_validate(data)
+
+    assert c.resolve_expected_migration_json_path(tmp_path) == default_path.resolve()
+
+
 def test_instance_config_resolve_dockerfile_path_missing(tmp_path: Path) -> None:
     data = {
         "instance_id": "task-1",

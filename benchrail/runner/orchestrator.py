@@ -139,6 +139,10 @@ def _build_task_queue(
         except ValueError as e:
             raise ConfigError(f"Instance {iid}: {e}") from e
         try:
+            config.resolve_expected_migration_json_path(instance_dir)
+        except ValueError as e:
+            raise ConfigError(f"Instance {iid}: {e}") from e
+        try:
             config.docker.resolve_dockerfile_path(instance_dir, dataset_path)
         except ValueError as e:
             raise ConfigError(f"Instance {iid}: {e}") from e

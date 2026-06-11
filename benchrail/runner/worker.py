@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import os
 import shlex
 import subprocess
@@ -33,6 +34,12 @@ class TaskSpec:
     mode: str
     auth_session: bool
     stop_flag: threading.Event
+
+
+@dataclass(frozen=True)
+class _AgentPatchBaseline:
+    tree_oid: str
+    untracked_files: tuple[str, ...]
 
 
 class _StepFailed(Exception):
@@ -223,6 +230,13 @@ def _write_result_atomic(result: InstanceResult, path: Path) -> None:
     tmp.rename(path)
 
 
+def _write_text_atomic(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(content, encoding="utf-8")
+    tmp.rename(path)
+
+
 def _result_path(spec: TaskSpec) -> Path:
     base = spec.output_root or spec.workspace_root
     return base / spec.run_id / spec.agent_entry.id / spec.instance_id / "result.json"
@@ -230,6 +244,10 @@ def _result_path(spec: TaskSpec) -> Path:
 
 def _agent_patch_path(spec: TaskSpec) -> Path:
     return _result_path(spec).with_name("agent.patch")
+
+
+def _expected_migration_diff_path(spec: TaskSpec) -> Path:
+    return _result_path(spec).with_name("expected_migration_vs_agent_patch.diff")
 
 
 def _task_workspace_dir(spec: TaskSpec) -> Path:
@@ -277,17 +295,74 @@ done
 """.strip()
 
 
-def _snapshot_agent_patch_local(
-    spec: TaskSpec,
+def _agent_patch_baseline_script(index_path: str) -> str:
+    return f"""
+set -eu
+export GIT_INDEX_FILE={shlex.quote(index_path)}
+rm -f "$GIT_INDEX_FILE"
+git add -A .
+tree=$(git write-tree)
+printf '%s\\n' "$tree"
+printf '%s\\n' '--'
+git ls-files --others --exclude-standard
+""".strip()
+
+
+def _parse_agent_patch_baseline(stdout: str) -> _AgentPatchBaseline:
+    lines = stdout.splitlines()
+    if not lines:
+        raise ValueError("baseline snapshot did not return a tree oid")
+    tree_oid = lines[0].strip()
+    if not tree_oid:
+        raise ValueError("baseline snapshot returned an empty tree oid")
+    untracked_start = 1
+    if len(lines) > 1 and lines[1] == "--":
+        untracked_start = 2
+    untracked_files = tuple(line for line in lines[untracked_start:] if line)
+    return _AgentPatchBaseline(tree_oid=tree_oid, untracked_files=untracked_files)
+
+
+def _build_agent_only_patch(
+    repo_dir: Path,
+    env: dict[str, str],
+    baseline: _AgentPatchBaseline | None,
+    current_tree_oid: str | None,
+) -> tuple[str, int, str]:
+    if baseline is None or current_tree_oid is None:
+        r = subprocess.run(
+            _agent_patch_script(),
+            cwd=repo_dir,
+            env=env,
+            shell=True,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        return r.stdout, r.returncode, r.stderr
+
+    r = subprocess.run(
+        ["git", "diff", "--binary", "--no-ext-diff", baseline.tree_oid, current_tree_oid],
+        cwd=repo_dir,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return r.stdout, r.returncode, r.stderr
+
+
+def _snapshot_repo_tree_local(
     repo_dir: Path,
     env: dict[str, str],
     logs_dir: Path,
     task_logger: RunnerLogger,
-) -> None:
-    patch_path = _agent_patch_path(spec)
-    patch_path.parent.mkdir(parents=True, exist_ok=True)
+    log_event: str,
+    log_prefix: str,
+) -> _AgentPatchBaseline | None:
+    index_path = logs_dir / f"{log_prefix}.index"
+    script = _agent_patch_baseline_script(str(index_path))
     r = subprocess.run(
-        _agent_patch_script(),
+        script,
         cwd=repo_dir,
         env=env,
         shell=True,
@@ -295,13 +370,76 @@ def _snapshot_agent_patch_local(
         capture_output=True,
         text=True,
     )
-    patch_path.write_text(r.stdout, encoding="utf-8")
-    if r.returncode != 0:
+    try:
+        if r.returncode != 0:
+            task_logger.warn(
+                f"{log_event}_FAILED",
+                exit_code=r.returncode,
+                stderr_tail=r.stderr[-500:].strip(),
+            )
+            return None
+        baseline = _parse_agent_patch_baseline(r.stdout)
+        task_logger.info(
+            f"{log_event}_END",
+            tree_oid=baseline.tree_oid,
+            untracked_files_count=len(baseline.untracked_files),
+        )
+        return baseline
+    except ValueError as exc:
+        task_logger.warn(f"{log_event}_FAILED", reason=str(exc))
+        return None
+    finally:
+        index_path.unlink(missing_ok=True)
+
+
+def _snapshot_agent_patch_baseline_local(
+    repo_dir: Path,
+    env: dict[str, str],
+    logs_dir: Path,
+    task_logger: RunnerLogger,
+) -> _AgentPatchBaseline | None:
+    return _snapshot_repo_tree_local(
+        repo_dir,
+        env,
+        logs_dir,
+        task_logger,
+        "AGENT_PATCH_BASELINE",
+        "agent_patch_baseline",
+    )
+
+
+def _snapshot_agent_patch_local(
+    spec: TaskSpec,
+    repo_dir: Path,
+    env: dict[str, str],
+    logs_dir: Path,
+    task_logger: RunnerLogger,
+    baseline: _AgentPatchBaseline | None,
+) -> None:
+    patch_path = _agent_patch_path(spec)
+    patch_path.parent.mkdir(parents=True, exist_ok=True)
+    current_tree = _snapshot_repo_tree_local(
+        repo_dir,
+        env,
+        logs_dir,
+        task_logger,
+        "AGENT_PATCH_CURRENT_TREE",
+        "agent_patch_current_tree",
+    )
+    current_tree_oid = current_tree.tree_oid if current_tree is not None else None
+    patch_text, exit_code, stderr_text = _build_agent_only_patch(
+        repo_dir,
+        env,
+        baseline,
+        current_tree_oid,
+    )
+    patch_path.write_text(patch_text, encoding="utf-8")
+    if exit_code != 0:
         task_logger.warn(
             "AGENT_PATCH_SNAPSHOT_FAILED",
             path=str(patch_path),
-            exit_code=r.returncode,
-            stderr_tail=r.stderr[-500:].strip(),
+            exit_code=exit_code,
+            stderr_tail=stderr_text[-500:].strip(),
         )
         return
     task_logger.info(
@@ -311,31 +449,133 @@ def _snapshot_agent_patch_local(
     )
 
 
+def _snapshot_repo_tree_docker(
+    docker_runner: Any,
+    env: dict[str, str],
+    logs_dir: Path,
+    task_logger: RunnerLogger,
+    log_event: str,
+    log_prefix: str,
+) -> _AgentPatchBaseline | None:
+    stdout_path = logs_dir / f"{log_prefix}.stdout"
+    stderr_path = logs_dir / f"{log_prefix}.stderr"
+    r = docker_runner.exec(
+        ["sh", "-c", _agent_patch_baseline_script("/tmp/benchrail-agent-patch-baseline.index")],
+        workdir="/bench/repo",
+        env=env,
+        timeout=120,
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
+        event_name="AGENT_PATCH_BASELINE",
+    )
+    try:
+        if r.exit_code != 0 or r.timed_out:
+            task_logger.warn(
+                f"{log_event}_FAILED",
+                exit_code=r.exit_code,
+                timed_out=r.timed_out,
+                stderr_tail=r.stderr_tail,
+            )
+            return None
+        baseline = _parse_agent_patch_baseline(
+            stdout_path.read_text(encoding="utf-8", errors="replace")
+        )
+        task_logger.info(
+            f"{log_event}_END",
+            tree_oid=baseline.tree_oid,
+            untracked_files_count=len(baseline.untracked_files),
+        )
+        return baseline
+    except ValueError as exc:
+        task_logger.warn(f"{log_event}_FAILED", reason=str(exc))
+        return None
+
+
+def _snapshot_agent_patch_baseline_docker(
+    docker_runner: Any,
+    env: dict[str, str],
+    logs_dir: Path,
+    task_logger: RunnerLogger,
+) -> _AgentPatchBaseline | None:
+    return _snapshot_repo_tree_docker(
+        docker_runner,
+        env,
+        logs_dir,
+        task_logger,
+        "AGENT_PATCH_BASELINE",
+        "agent_patch_baseline",
+    )
+
+
 def _snapshot_agent_patch_docker(
     spec: TaskSpec,
     docker_runner: Any,
     env: dict[str, str],
     logs_dir: Path,
     task_logger: RunnerLogger,
+    baseline: _AgentPatchBaseline | None,
 ) -> None:
     patch_path = _agent_patch_path(spec)
     patch_path.parent.mkdir(parents=True, exist_ok=True)
-    r = docker_runner.exec(
-        ["sh", "-c", _agent_patch_script()],
-        workdir="/bench/repo",
-        env=env,
-        timeout=120,
-        stdout_path=patch_path,
-        stderr_path=logs_dir / "agent_patch.stderr",
-        event_name="AGENT_PATCH_SNAPSHOT",
-    )
-    if r.exit_code != 0 or r.timed_out:
+    stderr_path = logs_dir / "agent_patch.stderr"
+    if baseline is None:
+        r = docker_runner.exec(
+            ["sh", "-c", _agent_patch_script()],
+            workdir="/bench/repo",
+            env=env,
+            timeout=120,
+            stdout_path=patch_path,
+            stderr_path=stderr_path,
+            event_name="AGENT_PATCH_SNAPSHOT",
+        )
+        if r.exit_code != 0 or r.timed_out:
+            task_logger.warn(
+                "AGENT_PATCH_SNAPSHOT_FAILED",
+                path=str(patch_path),
+                exit_code=r.exit_code,
+                timed_out=r.timed_out,
+                stderr_tail=r.stderr_tail,
+            )
+            return
+    else:
+        current_tree = _snapshot_repo_tree_docker(
+            docker_runner,
+            env,
+            logs_dir,
+            task_logger,
+            "AGENT_PATCH_CURRENT_TREE",
+            "agent_patch_current_tree",
+        )
+        if current_tree is None:
+            task_logger.warn(
+                "AGENT_PATCH_SNAPSHOT_FAILED",
+                path=str(patch_path),
+                reason="failed to capture current tree for agent-only patch",
+            )
+            return
+        r = docker_runner.exec(
+            ["git", "diff", "--binary", "--no-ext-diff", baseline.tree_oid, current_tree.tree_oid],
+            workdir="/bench/repo",
+            env=env,
+            timeout=120,
+            stdout_path=patch_path,
+            stderr_path=stderr_path,
+            event_name="AGENT_PATCH_SNAPSHOT",
+        )
+        if r.exit_code != 0 or r.timed_out:
+            task_logger.warn(
+                "AGENT_PATCH_SNAPSHOT_FAILED",
+                path=str(patch_path),
+                exit_code=r.exit_code,
+                timed_out=r.timed_out,
+                stderr_tail=r.stderr_tail,
+            )
+            return
+    if baseline is None and not patch_path.exists():
         task_logger.warn(
             "AGENT_PATCH_SNAPSHOT_FAILED",
             path=str(patch_path),
-            exit_code=r.exit_code,
-            timed_out=r.timed_out,
-            stderr_tail=r.stderr_tail,
+            reason="agent patch snapshot did not produce an output file",
         )
         return
     task_logger.info(
@@ -365,6 +605,44 @@ def _warn_if_agent_succeeded_without_changes(
     )
 
 
+def _write_expected_migration_diff(spec: TaskSpec, task_logger: RunnerLogger) -> None:
+    expected_path = spec.instance_config.resolve_expected_migration_json_path(spec.instance_dir)
+    if expected_path is None:
+        return
+
+    patch_path = _agent_patch_path(spec)
+    diff_path = _expected_migration_diff_path(spec)
+    expected_label = str(expected_path.relative_to(spec.instance_dir))
+    patch_label = patch_path.name
+
+    expected_lines = expected_path.read_text(encoding="utf-8", errors="replace").splitlines(
+        keepends=True
+    )
+    if patch_path.exists():
+        patch_lines = patch_path.read_text(encoding="utf-8", errors="replace").splitlines(
+            keepends=True
+        )
+    else:
+        patch_lines = []
+
+    diff_text = "".join(
+        difflib.unified_diff(
+            expected_lines,
+            patch_lines,
+            fromfile=expected_label,
+            tofile=patch_label,
+        )
+    )
+    _write_text_atomic(diff_path, diff_text)
+    task_logger.info(
+        "EXPECTED_MIGRATION_DIFF_END",
+        expected_path=str(expected_path),
+        agent_patch_path=str(patch_path),
+        diff_path=str(diff_path),
+        bytes=diff_path.stat().st_size,
+    )
+
+
 def _parse_patch_touched_files(patch_path: Path) -> list[str]:
     files: list[str] = []
     seen: set[str] = set()
@@ -388,63 +666,6 @@ def _sample_items(items: list[str], limit: int = 8) -> str:
         return ",".join(items)
     shown = ",".join(items[:limit])
     return f"{shown},...(+{len(items) - limit} more)"
-
-
-def _modified_files_local(repo_dir: Path, env: dict[str, str]) -> list[str]:
-    result = subprocess.run(
-        ["git", "status", "--porcelain"],
-        cwd=repo_dir,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        return []
-    files: list[str] = []
-    seen: set[str] = set()
-    for line in result.stdout.splitlines():
-        if len(line) < 4:
-            continue
-        path = line[3:]
-        if " -> " in path:
-            path = path.split(" -> ", 1)[1]
-        if path not in seen:
-            seen.add(path)
-            files.append(path)
-    return files
-
-
-def _modified_files_docker(
-    docker_runner: Any,
-    env: dict[str, str],
-    logs_dir: Path,
-) -> list[str]:
-    status_stdout = logs_dir / "agent_modified_files.stdout"
-    status_stderr = logs_dir / "agent_modified_files.stderr"
-    result = docker_runner.exec(
-        ["git", "status", "--porcelain"],
-        workdir="/bench/repo",
-        env=env,
-        timeout=30,
-        stdout_path=status_stdout,
-        stderr_path=status_stderr,
-        event_name="AGENT_MODIFIED_FILES",
-    )
-    if result.exit_code != 0 or result.timed_out:
-        return []
-    files: list[str] = []
-    seen: set[str] = set()
-    for line in status_stdout.read_text(encoding="utf-8", errors="replace").splitlines():
-        if len(line) < 4:
-            continue
-        path = line[3:]
-        if " -> " in path:
-            path = path.split(" -> ", 1)[1]
-        if path not in seen:
-            seen.add(path)
-            files.append(path)
-    return files
 
 
 def _log_patch_context(
@@ -590,6 +811,11 @@ def _run_local(
         _check_stop()
         _check_timeout()
 
+        patch_baseline = _snapshot_agent_patch_baseline_local(repo_dir, env, logs_dir, task_logger)
+
+        _check_stop()
+        _check_timeout()
+
         # Run agent
         adapter = build_adapter(
             spec.agent_entry.agent,
@@ -631,8 +857,9 @@ def _run_local(
             cost_usd=agent_run.cost_usd,
             cost_credits=agent_run.cost_credits,
         )
-        _snapshot_agent_patch_local(spec, repo_dir, env, logs_dir, task_logger)
-        modified_files = _modified_files_local(repo_dir, env)
+        _snapshot_agent_patch_local(spec, repo_dir, env, logs_dir, task_logger, patch_baseline)
+        _write_expected_migration_diff(spec, task_logger)
+        modified_files = _parse_patch_touched_files(_agent_patch_path(spec))
         _warn_if_agent_succeeded_without_changes(
             task_logger,
             agent_run,
@@ -923,6 +1150,16 @@ def _run_docker(
         _check_stop()
         _check_timeout()
 
+        patch_baseline = _snapshot_agent_patch_baseline_docker(
+            docker_runner,
+            env,
+            logs_dir,
+            task_logger,
+        )
+
+        _check_stop()
+        _check_timeout()
+
         # Run agent
         adapter = build_adapter(spec.agent_entry.agent, spec.agent_entry.command, [])
         agent_cmd = adapter.build_command(spec.instance_config.prompt, execution_mode="docker")
@@ -955,8 +1192,16 @@ def _run_docker(
             cost_usd=agent_run.cost_usd,
             cost_credits=agent_run.cost_credits,
         )
-        _snapshot_agent_patch_docker(spec, docker_runner, env, logs_dir, task_logger)
-        modified_files = _modified_files_docker(docker_runner, env, logs_dir)
+        _snapshot_agent_patch_docker(
+            spec,
+            docker_runner,
+            env,
+            logs_dir,
+            task_logger,
+            patch_baseline,
+        )
+        _write_expected_migration_diff(spec, task_logger)
+        modified_files = _parse_patch_touched_files(_agent_patch_path(spec))
         _warn_if_agent_succeeded_without_changes(
             task_logger,
             agent_run,
