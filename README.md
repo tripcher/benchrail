@@ -7,7 +7,7 @@ setups and comparing the results.
 
 An agent setup can include:
 
-- a different agent
+- a different agent (Codex, Claude code)
 - a different model
 - a different skill
 - a different tool
@@ -18,61 +18,40 @@ An agent setup can include:
 Use `benchrail` to measure whether a change actually makes the agent better on
 the tasks you care about.
 
-## What It Does
-
-- Expands a dataset into `(instance, agent)` tasks
-- Runs tasks in `local` or `docker` mode
-- Captures agent output, checks, timing, token usage, and cost metadata
-- Writes per-task results and aggregated run summaries
-
-Typical use cases:
-
-- Compare Codex and Claude Code on the same dataset
-- Test whether a new skill improves results on specific tasks
-- Measure whether a tool or `AGENTS.md` change helps or hurts
-- Smoke-test a benchmark dataset across multiple language ecosystems
-- Compare agent setups with repeatable local or containerized runs
-
 ## Quick Start
 
-Requirements:
+### Install
 
-- Python 3.10+
-- [`uv`](https://docs.astral.sh/uv/)
-- Docker, if you want `--mode docker`
-
-Install dependencies:
+Install from PyPI with `uv`:
 
 ```bash
-uv sync --dev
+uv tool install benchrail
 ```
 
-Validate the included smoke dataset:
+Install from PyPI with `pip`:
 
 ```bash
-uv run benchrail validate \
-  --dataset examples/multi-swe-bench-universal-smoke
+pip install benchrail
 ```
 
-Run the included smoke dataset in Docker mode:
+### Run
+Run in Docker mode:
 
 ```bash
-uv run benchrail run \
+benchrail run \
   --dataset examples/multi-swe-bench-universal-smoke \
-  --mode docker \
-  --agents codex-gpt-5.4-mini-medium
+  --mode docker
 ```
 
 Run the same dataset locally:
 
 ```bash
-uv run benchrail run \
+benchrail run \
   --dataset examples/multi-swe-bench-universal-smoke \
-  --mode local \
-  --agents codex-gpt-5.4-mini-medium
+  --mode local 
 ```
 
-If you use Docker mode and want to reuse your local Codex login instead of passing
+If you use Docker mode and want to reuse your local AI agent login instead of passing
 an API key into the container, add:
 
 ```bash
@@ -153,7 +132,7 @@ Example included in this repository:
 Validate it before your first run:
 
 ```bash
-uv run benchrail validate \
+benchrail validate \
   --dataset examples/multi-swe-bench-universal-smoke
 ```
 
@@ -176,37 +155,6 @@ Current built-in agent types:
 
 - `codex`
 - `claude-code`
-
-## CLI Commands
-
-### `validate`
-
-Checks dataset structure and validates all configuration files.
-
-```bash
-uv run benchrail validate --dataset path/to/dataset
-```
-
-### `run`
-
-Runs all `(instance, agent)` tasks produced from the dataset and manifest.
-
-```bash
-uv run benchrail run \
-  --dataset path/to/dataset \
-  --mode docker
-```
-
-Useful options:
-
-- `--agents`: comma-separated agent ids from `manifest.json`
-- `--instance_ids`: comma-separated instance ids to run
-- `--workspace`: workspace root for task execution directories
-- `--output`: directory for result artifacts
-- `--logs`: directory for runner and step logs
-- `--run_id`: explicit run identifier
-- `--workers`: maximum parallel workers
-- `--auth-session`: in Docker mode, copy a local auth session file into the task container
 
 ## Execution Modes
 
@@ -284,27 +232,6 @@ The aggregated run summary includes:
 - cost in USD and credits, when available
 - per-check pass/fail counts
 
-## Included Example Dataset
-
-The repository includes a smoke dataset built for cross-language benchmarking:
-
-- `examples/multi-swe-bench-universal-smoke`
-
-It is intended primarily for Docker runs with the universal benchmark image and
-includes instances across multiple ecosystems.
-
-Run it:
-
-```bash
-uv run benchrail run \
-  --dataset examples/multi-swe-bench-universal-smoke \
-  --mode docker
-```
-
-More context is available in:
-
-- `examples/multi-swe-bench-universal-smoke/README.md`
-
 ## Development
 
 Run unit tests:
@@ -352,33 +279,3 @@ See [NOTICE](NOTICE) for
 an overview, and
 [LICENSES/THIRD_PARTY.md](LICENSES/THIRD_PARTY.md)
 for attribution and redistribution caveats for dataset-derived content.
-
-## Repository Structure
-
-```text
-benchrail/
-  cli.py
-  commands/
-  dto/
-  adapters/
-  runner/
-
-tests/
-  unit/
-  integration/
-
-docker/universal/
-examples/
-```
-
-## When To Reach For This Tool
-
-Use `benchrail` when you need:
-
-- repeatable benchmark runs against coding agents
-- stable task expansion from dataset definitions
-- structured pass/fail artifacts instead of raw terminal logs
-- token and cost reporting normalized into result files
-
-It is less suitable if you only need a one-off ad hoc script or a single manual
-agent run with no result collection.
