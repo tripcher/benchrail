@@ -5,6 +5,13 @@ on:
     branches: ["**"]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -122,3 +129,4 @@ jobs:
         with:
           name: dist
           path: dist/
+          retention-days: 7
