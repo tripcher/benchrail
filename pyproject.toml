@@ -41,6 +41,9 @@ benchrail = "benchrail.cli:app"
 [tool.hatch.version]
 path = "benchrail/__init__.py"
 
+[tool.hatch.build]
+exclude = ["/outputs"]
+
 [dependency-groups]
 dev = [
     "build>=1.2",
