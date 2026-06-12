@@ -193,11 +193,6 @@ jobs:
             dockerfile: docker/universal/Dockerfile
             platform: linux/amd64
             platform_pair: linux-amd64
-          - image_name: universal
-            image_repository: benchrail-universal
-            dockerfile: docker/universal/Dockerfile
-            platform: linux/arm64
-            platform_pair: linux-arm64
           - image_name: python
             image_repository: benchrail-python
             dockerfile: docker/python/Dockerfile

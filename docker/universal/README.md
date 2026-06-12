@@ -146,11 +146,11 @@ In addition to the configurable runtimes above, the image also includes:
 - `elixir` `1.18.3`
 - C/C++ tooling such as `clang-tidy`, `clang-format`, `cpplint`, `cmakelang`
 
-See [Dockerfile](Dockerfile) for the full package list.
+See [Dockerfile](./Dockerfile) for the full package list.
 
 ## Verification
 
-[verify.sh](verify.sh) validates:
+[verify.sh](./verify.sh) validates:
 
 - preinstalled language runtimes declared in the Docker build arguments
 - `setup_universal.sh` across the configured runtime matrix
