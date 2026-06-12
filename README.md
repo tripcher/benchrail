@@ -240,6 +240,18 @@ Run unit tests:
 make unit
 ```
 
+Manual release prep:
+
+```bash
+make bump BUMP=patch
+git commit -am "Release $(make print-release-tag)"
+git push origin main
+make tag-release
+git push origin "$(make print-release-tag)"
+```
+
+After the tag is pushed, run the GitHub release workflow with that tag.
+
 Run lint and type checks:
 
 ```bash
