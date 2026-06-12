@@ -146,8 +146,7 @@ In addition to the configurable runtimes above, the image also includes:
 - `elixir` `1.18.3`
 - C/C++ tooling such as `clang-tidy`, `clang-format`, `cpplint`, `cmakelang`
 
-See [Dockerfile](Dockerfile) for
-the full package list.
+See [Dockerfile](Dockerfile) for the full package list.
 
 ## Verification
 

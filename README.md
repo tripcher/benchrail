@@ -265,8 +265,7 @@ uv run ruff check --fix benchrail/ tests/
 ## License
 
 The source code in this repository is licensed under the MIT License. See
-[LICENSE](LICENSE) or
-[LICENSES/LICENSE](LICENSES/LICENSE).
+[LICENSE](LICENSE) or [LICENSES/LICENSE](LICENSES/LICENSE).
 
 This repository also contains third-party derived materials:
 
@@ -275,7 +274,6 @@ This repository also contains third-party derived materials:
 - `examples/multi-swe-bench-universal-smoke/` is derived from `SWE-bench_Lite`
   and `SWE-bench_Multilingual`
 
-See [NOTICE](NOTICE) for
-an overview, and
+See [NOTICE](NOTICE) for an overview, and
 [LICENSES/THIRD_PARTY.md](LICENSES/THIRD_PARTY.md)
 for attribution and redistribution caveats for dataset-derived content.
