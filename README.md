@@ -245,12 +245,17 @@ Manual release prep:
 ```bash
 make bump BUMP=patch
 git commit -am "Release $(make print-release-tag)"
-git push origin main
+# open a PR, get it merged to main, then sync local main
+git fetch origin
+git checkout main
+git pull --ff-only origin main
 make tag-release
 git push origin "$(make print-release-tag)"
 ```
 
-After the tag is pushed, run the GitHub release workflow with that tag.
+After the tag is pushed, create and publish the matching GitHub Release for that tag.
+Publishing the GitHub Release triggers the release workflow automatically. That workflow
+publishes to PyPI and Docker.
 
 Run lint and type checks:
 
