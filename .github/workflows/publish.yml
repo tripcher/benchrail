@@ -1,23 +1,19 @@
 name: Release
 
 on:
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: "Existing protected release tag to publish (example: v0.3.0)"
-        required: true
-        type: string
+  release:
+    types:
+      - published
 
 permissions:
   contents: read
 
 concurrency:
-  group: release
+  group: release-${{ github.event.release.tag_name }}
   cancel-in-progress: false
 
 jobs:
-  authorize-release:
-    if: github.actor == 'tripcher'
+  validate-release:
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.validate.outputs.tag }}
@@ -30,26 +26,27 @@ jobs:
       - name: Validate protected release tag
         id: validate
         env:
-          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           if ! [[ "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Release tag must match vMAJOR.MINOR.PATCH."
             exit 1
           fi
 
-          git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}"
-          git merge-base --is-ancestor "refs/tags/${RELEASE_TAG}^{commit}" origin/main
+          git fetch origin main --depth=1
+          RELEASE_SHA="$(git rev-list -n 1 "${RELEASE_TAG}")"
+          git merge-base --is-ancestor "${RELEASE_SHA}" origin/main
           echo "tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
 
   publish-pypi:
-    needs: authorize-release
+    needs: validate-release
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
       contents: read
       id-token: write
     env:
-      RELEASE_TAG: ${{ needs.authorize-release.outputs.tag }}
+      RELEASE_TAG: ${{ needs.validate-release.outputs.tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -86,14 +83,14 @@ jobs:
           attestations: true
 
   publish-docker:
-    needs: [authorize-release, publish-pypi]
+    needs: [validate-release, publish-pypi]
     name: Publish Docker (${{ matrix.image_name }} ${{ matrix.platform }})
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     env:
-      RELEASE_TAG: ${{ needs.authorize-release.outputs.tag }}
+      RELEASE_TAG: ${{ needs.validate-release.outputs.tag }}
     strategy:
       fail-fast: false
       matrix:
@@ -168,13 +165,13 @@ jobs:
           retention-days: 1
 
   publish-docker-manifest:
-    needs: [authorize-release, publish-docker]
+    needs: [validate-release, publish-docker]
     name: Publish Docker manifest (${{ matrix.image_name }})
     runs-on: ubuntu-latest
     permissions:
       packages: write
     env:
-      RELEASE_TAG: ${{ needs.authorize-release.outputs.tag }}
+      RELEASE_TAG: ${{ needs.validate-release.outputs.tag }}
     strategy:
       fail-fast: false
       matrix:
@@ -226,22 +223,3 @@ jobs:
 
       - name: Inspect published manifest
         run: docker buildx imagetools inspect ghcr.io/${{ github.repository_owner }}/${{ matrix.image_repository }}:${{ env.RELEASE_TAG }}
-
-  create-github-release:
-    needs: [authorize-release, publish-docker-manifest]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      RELEASE_TAG: ${{ needs.authorize-release.outputs.tag }}
-    steps:
-      - name: Create or confirm GitHub release
-        run: |
-          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
-            echo "GitHub release ${RELEASE_TAG} already exists."
-          else
-            gh release create "${RELEASE_TAG}" \
-              --title "${RELEASE_TAG}" \
-              --notes "Release ${RELEASE_TAG}"
-          fi
