@@ -3,8 +3,15 @@
 `docker/universal` contains the reference Docker image for running `benchrail` benchmarks in a
 shared multi-language environment.
 
+Published images are available on GitHub Container Registry:
+
+- `ghcr.io/tripcher/benchrail-universal:latest`
+- `ghcr.io/tripcher/benchrail-universal:<release-tag>`
+
+Use a release tag for reproducible benchmark reports. Use `latest` for local smoke testing.
+
 This image is the default execution environment for datasets that set
-`docker.image=benchrail-universal:latest`. It is intended to:
+`docker.image=ghcr.io/tripcher/benchrail-universal:latest`. It is intended to:
 
 - provide a reproducible runtime for benchmark tasks across multiple language ecosystems
 - install and select toolchain versions through `BENCH_ENV_*` variables
@@ -19,15 +26,24 @@ The image entrypoint runs:
 
 ## Primary Usage
 
-The main use case is running benchmark datasets through `benchrail` in `docker` mode.
+The main use case is running benchmark datasets through `benchrail` in `docker` mode with the
+published GHCR image.
 
-Build the image from the repository root:
+Dataset config example:
+
+```json
+{
+  "docker": {
+    "image": "ghcr.io/tripcher/benchrail-universal:latest"
+  }
+}
+```
+
+Docker pulls the image automatically when a task starts and the image is not available
+locally. You can also pull it explicitly:
 
 ```sh
-docker build \
-    -f docker/universal/Dockerfile \
-    -t benchrail-universal:latest \
-    .
+docker pull ghcr.io/tripcher/benchrail-universal:latest
 ```
 
 Run the example smoke dataset:
@@ -67,7 +83,7 @@ docker run --rm -it \
     -e BENCH_ENV_CODEX_VERSION=latest \
     -v "$PWD/examples/multi-swe-bench-universal-smoke:/datasets/multi-swe-bench-universal-smoke:ro" \
     -v "$PWD/tmp:/results" \
-    benchrail-universal:latest \
+    ghcr.io/tripcher/benchrail-universal:latest \
     bash -lc 'benchrail run \
         --dataset /datasets/multi-swe-bench-universal-smoke \
         --mode local \
@@ -86,7 +102,7 @@ docker run --rm -it \
     -v "$PWD/examples/multi-swe-bench-universal-smoke:/datasets/multi-swe-bench-universal-smoke:ro" \
     -v "$PWD/tmp:/results" \
     -v "$HOME/.codex/auth.json:/root/.codex/auth.json:ro" \
-    benchrail-universal:latest \
+    ghcr.io/tripcher/benchrail-universal:latest \
     bash -lc 'benchrail run \
         --dataset /datasets/multi-swe-bench-universal-smoke \
         --mode local \
@@ -147,6 +163,17 @@ In addition to the configurable runtimes above, the image also includes:
 - C/C++ tooling such as `clang-tidy`, `clang-format`, `cpplint`, `cmakelang`
 
 See [Dockerfile](./Dockerfile) for the full package list.
+
+## Local Image Development
+
+Build the image locally only when changing files under `docker/universal/`:
+
+```sh
+docker build \
+    -f docker/universal/Dockerfile \
+    -t benchrail-universal:dev \
+    .
+```
 
 ## Verification
 

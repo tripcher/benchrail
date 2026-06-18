@@ -218,7 +218,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gnupg2=2.4.* \
     && curl -O https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz \
     && tar zxf swiftly-$(uname -m).tar.gz \
-    && ./swiftly init --quiet-shell-followup \
+    && ./swiftly init --quiet-shell-followup --skip-install \
+    && rm -f swiftly-$(uname -m).tar.gz swiftly \
     && for v in $SWIFT_VERSIONS; do \
          swiftly install "$v"; \
        done \
