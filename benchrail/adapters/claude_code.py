@@ -56,7 +56,8 @@ class ClaudeCodeAdapter(BaseAdapter):
             payload = json.loads(text)
             data = _as_dict(payload)
             if data is None:
-                raise ValueError("Claude output must be a JSON object")
+                msg = "Claude output must be a JSON object"
+                raise ValueError(msg)
 
             session_id = _as_str(data.get("session_id")) or ""
             turns = _as_int(data.get("num_turns"))
@@ -76,7 +77,7 @@ class ClaudeCodeAdapter(BaseAdapter):
             model_usage = _as_dict(data.get("modelUsage")) or {}
             if model_usage:
                 model = next(iter(model_usage.keys()), None)
-        except Exception:
+        except (json.JSONDecodeError, ValueError, KeyError, TypeError, AttributeError):
             pass
 
         return AgentRunResult(

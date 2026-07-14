@@ -8,7 +8,7 @@ Example dataset for `benchrail` built from five instances across `SWE-bench_Mult
 - `fmtlib__fmt-3901` - C++
 - `pydicom__pydicom-1694` - Python
 
-The dataset is aimed at smoke-testing the `benchrail-universal:latest` image across different language ecosystems, including one Python task sourced from `SWE-bench_Lite`.
+The dataset is aimed at smoke-testing the published `ghcr.io/tripcher/benchrail-universal:latest` image across different language ecosystems, including one Python task sourced from `SWE-bench_Lite`.
 Each instance uses `docker.image` with runtime selection through `docker.env`.
 
 ## Included layout

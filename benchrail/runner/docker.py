@@ -5,14 +5,16 @@ from __future__ import annotations
 import re
 import shlex
 import time
-from collections.abc import Iterator, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Protocol, TypedDict, cast
+from typing import TYPE_CHECKING, Protocol, TypedDict, cast
 
 from benchrail.runner.git import GitCommandResult, setup_and_cleanup_repository
 from benchrail.runner.logging_util import RunnerLogger, TruncatingWriter
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator, Mapping
+    from pathlib import Path
 
 
 def _sanitize_tag(value: str) -> str:
@@ -155,7 +157,8 @@ class DockerTaskRunner:
             ]
             container_id = self._container.id
             if container_id is None:
-                raise ValueError("Container id is missing")
+                msg = "Container id is missing"
+                raise ValueError(msg)
             exec_id = self._client.api.exec_create(
                 container_id,
                 wrapped_cmd,
@@ -186,7 +189,7 @@ class DockerTaskRunner:
             stderr_tail_str = _tail(stderr_data) if exit_code != 0 else ""
 
             if exit_code in {124, 137}:
-                self._logger.warn(
+                self._logger.warning(
                     f"{event_name}_TIMEOUT",
                     elapsed_ms=duration_ms,
                     limit_ms=timeout * 1000,
@@ -218,16 +221,12 @@ class DockerTaskRunner:
             stderr_w.close()
 
     def stop_and_remove(self) -> None:
-        try:
+        with suppress(Exception):
             self._logger.info("CONTAINER_STOP")
             self._container.stop(timeout=10)
-        except Exception:
-            pass
-        try:
+        with suppress(Exception):
             self._logger.info("CONTAINER_REMOVE")
             self._container.remove(force=True)
-        except Exception:
-            pass
         _close_quietly(self._client)
 
 
@@ -268,7 +267,7 @@ def build_image(
         duration_ms = int((time.monotonic() - start) * 1000)
         logger.info("BUILD_END", duration_ms=duration_ms, exit_code=0)
         return True
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         duration_ms = int((time.monotonic() - start) * 1000)
         err_msg = str(e)[:500]
         stderr_w.write(err_msg.encode("utf-8", errors="replace"))
@@ -303,8 +302,8 @@ def create_task_runner(
             init=True,
             working_dir="/",
         )
-        typed_client = cast(_DockerClient, client)
-        typed_container = cast(_DockerContainer, container)
+        typed_client = cast("_DockerClient", client)
+        typed_container = cast("_DockerContainer", container)
 
         logger.info("CONTAINER_START")
         container.start()
@@ -339,7 +338,7 @@ def create_task_runner(
             _cp_dir_to_container(typed_client, typed_container, patches_src, "/bench/patches/")
         return DockerTaskRunner(typed_client, typed_container, image_tag, logger)
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         logger.error("CONTAINER_CREATE_FAILED", error=str(e)[:200])
         return None
 
@@ -476,7 +475,8 @@ def _cp_dir_to_container(
         tar.add(str(src_dir), arcname=".")
     buf.seek(0)
     if container.id is None:
-        raise ValueError("Container id is missing")
+        msg = "Container id is missing"
+        raise ValueError(msg)
     client.api.put_archive(container.id, dst_path, buf)
 
 
@@ -487,7 +487,8 @@ def _ensure_container_dirs(
 ) -> None:
     container_id = container.id
     if container_id is None:
-        raise ValueError("Container id is missing")
+        msg = "Container id is missing"
+        raise ValueError(msg)
     exec_id = client.api.exec_create(
         container_id,
         ["mkdir", "-p", *paths],
@@ -502,7 +503,8 @@ def _ensure_container_dirs(
         _close_quietly(output_gen)
     result = client.api.exec_inspect(exec_id["Id"])
     if result.get("ExitCode", 1) != 0:
-        raise RuntimeError(f"failed to create container directories: {paths}")
+        msg = f"failed to create container directories: {paths}"
+        raise RuntimeError(msg)
 
 
 def _cp_file_to_container(
@@ -520,7 +522,8 @@ def _cp_file_to_container(
         tar.add(str(src_file), arcname=dst_relpath)
     buf.seek(0)
     if container.id is None:
-        raise ValueError("Container id is missing")
+        msg = "Container id is missing"
+        raise ValueError(msg)
     client.api.put_archive(container.id, dst_dir, buf)
 
 

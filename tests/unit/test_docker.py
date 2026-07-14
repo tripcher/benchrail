@@ -177,7 +177,7 @@ def test_runner_exec_closes_underlying_response_and_client_on_teardown(
     container = _FakeContainer(events)
     logger = RunnerLogger(tmp_path / "runner.log")
     runner = docker_runner.DockerTaskRunner(
-        cast(docker_runner._DockerClient, fake_client),
+        cast("docker_runner._DockerClient", fake_client),
         container,
         "image:latest",
         logger,
@@ -210,7 +210,7 @@ def test_runner_exec_reports_container_side_timeout(tmp_path: Path) -> None:
     container = _FakeContainer(events)
     logger = RunnerLogger(tmp_path / "runner.log")
     runner = docker_runner.DockerTaskRunner(
-        cast(docker_runner._DockerClient, fake_client),
+        cast("docker_runner._DockerClient", fake_client),
         container,
         "image:latest",
         logger,
@@ -241,7 +241,7 @@ def test_setup_repository_delegates_to_shared_git_facade(
     fake_client = _FakeClient(events)
     logger = RunnerLogger(tmp_path / "runner.log")
     runner = docker_runner.DockerTaskRunner(
-        cast(docker_runner._DockerClient, fake_client),
+        cast("docker_runner._DockerClient", fake_client),
         _FakeContainer(events),
         "image:latest",
         logger,
@@ -320,7 +320,7 @@ def test_apply_patch_runs_precheck_before_apply(tmp_path: Path) -> None:
     fake_client = _FakeClient(events)
     logger = RunnerLogger(tmp_path / "runner.log")
     runner = docker_runner.DockerTaskRunner(
-        cast(docker_runner._DockerClient, fake_client),
+        cast("docker_runner._DockerClient", fake_client),
         _FakeContainer(events),
         "image:latest",
         logger,

@@ -5,8 +5,10 @@ from __future__ import annotations
 import sys
 import threading
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import IO, Protocol, cast
+from typing import IO, TYPE_CHECKING, Protocol, cast
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 MAX_LOG_FILE_BYTES = 50 * 1024 * 1024  # 50 MB
 
@@ -35,7 +37,7 @@ class RunnerLogger:
     def __init__(self, log_path: Path) -> None:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         self._path = log_path
-        self._file: IO[str] = open(log_path, "a", encoding="utf-8")  # noqa: SIM115
+        self._file: IO[str] = log_path.open("a", encoding="utf-8")
         self._lock = threading.Lock()
 
     def _write(self, level: str, event: str, **kwargs: object) -> None:
@@ -48,6 +50,9 @@ class RunnerLogger:
         self._write("INFO", event, **kwargs)
 
     def warn(self, event: str, **kwargs: object) -> None:
+        self._write("WARN", event, **kwargs)
+
+    def warning(self, event: str, **kwargs: object) -> None:
         self._write("WARN", event, **kwargs)
 
     def error(self, event: str, **kwargs: object) -> None:
@@ -77,7 +82,7 @@ class TruncatingWriter:
         self._written = 0
         self._omitted = 0
         self._truncated = False
-        self._file = open(path, "wb")  # noqa: SIM115
+        self._file = path.open("wb")
 
     def write(self, data: bytes) -> None:
         if self._truncated:
@@ -99,7 +104,7 @@ class TruncatingWriter:
             marker = f"\n[TRUNCATED: {self._omitted} bytes omitted]\n".encode()
             self._file.write(marker)
             self._file.flush()
-            self._logger.warn(
+            self._logger.warning(
                 "LOG_TRUNCATED",
                 file=self._path.name,
                 limit_bytes=self._max_bytes,
@@ -119,7 +124,7 @@ class ConsoleOutput:
             try:
                 from rich.console import Console
 
-                self._rich = cast(_RichConsole, Console(stderr=False))
+                self._rich = cast("_RichConsole", Console(stderr=False))
             except ImportError:
                 self._is_tty = False
 
@@ -135,7 +140,7 @@ class ConsoleOutput:
             if self._is_tty and self._rich is not None:
                 self._rich.print(msg)
             else:
-                print(msg, flush=True)
+                print(msg, flush=True)  # noqa: T201
 
     def run_start(
         self,

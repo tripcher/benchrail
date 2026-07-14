@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
-from benchrail.runner.logging_util import RunnerLogger
+if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
+    from pathlib import Path
+
+    from benchrail.runner.logging_util import RunnerLogger
 
 GIT_CLEANUP_NOTE_REFS = (
     "refs/notes/ai",

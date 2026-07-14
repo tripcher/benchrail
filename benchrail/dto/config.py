@@ -11,7 +11,8 @@ _ENV_NAME_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 def _validate_env_names(names: list[str]) -> list[str]:
     for name in names:
         if not _ENV_NAME_RE.match(name):
-            raise ValueError(f"Invalid env var name: {name!r} (must match [A-Z_][A-Z0-9_]*)")
+            msg = f"Invalid env var name: {name!r} (must match [A-Z_][A-Z0-9_]*)"
+            raise ValueError(msg)
     return names
 
 
@@ -23,14 +24,16 @@ class HookConfig(BaseModel):
     @classmethod
     def command_not_empty(cls, v: str) -> str:
         if not v.strip():
-            raise ValueError("hook command must not be empty")
+            msg = "hook command must not be empty"
+            raise ValueError(msg)
         return v
 
     @field_validator("timeout_sec")
     @classmethod
     def timeout_positive(cls, v: int) -> int:
         if v <= 0:
-            raise ValueError("timeout_sec must be a positive integer")
+            msg = "timeout_sec must be a positive integer"
+            raise ValueError(msg)
         return v
 
 
@@ -48,14 +51,16 @@ class CheckCommand(BaseModel):
     @classmethod
     def command_not_empty(cls, v: str) -> str:
         if not v.strip():
-            raise ValueError("check command must not be empty")
+            msg = "check command must not be empty"
+            raise ValueError(msg)
         return v
 
     @field_validator("timeout_sec")
     @classmethod
     def timeout_positive(cls, v: int) -> int:
         if v <= 0:
-            raise ValueError("timeout_sec must be a positive integer")
+            msg = "timeout_sec must be a positive integer"
+            raise ValueError(msg)
         return v
 
 
@@ -69,7 +74,8 @@ class DockerConfig(BaseModel):
     @classmethod
     def validate_optional_path_or_ref(cls, v: str | None) -> str | None:
         if v is not None and not v.strip():
-            raise ValueError("docker image/dockerfile must not be empty")
+            msg = "docker image/dockerfile must not be empty"
+            raise ValueError(msg)
         return v
 
     @field_validator("env")
@@ -86,7 +92,8 @@ class DockerConfig(BaseModel):
     @model_validator(mode="after")
     def validate_image_xor_dockerfile(self) -> "DockerConfig":
         if self.image and self.dockerfile:
-            raise ValueError("docker.image and docker.dockerfile are mutually exclusive")
+            msg = "docker.image and docker.dockerfile are mutually exclusive"
+            raise ValueError(msg)
         return self
 
     def resolve_dockerfile_path(
@@ -107,12 +114,14 @@ class DockerConfig(BaseModel):
             try:
                 resolved.relative_to(root.resolve())
             except ValueError:
-                raise ValueError("docker.dockerfile must not escape its config directory") from None
+                msg = "docker.dockerfile must not escape its config directory"
+                raise ValueError(msg) from None
             candidates.append(resolved)
             if resolved.exists():
                 return resolved
 
-        raise ValueError(f"docker.dockerfile: file not found: {', '.join(map(str, candidates))}")
+        msg = f"docker.dockerfile: file not found: {', '.join(map(str, candidates))}"
+        raise ValueError(msg)
 
 
 class InstanceConfig(BaseModel):
@@ -132,30 +141,35 @@ class InstanceConfig(BaseModel):
     @classmethod
     def repo_not_empty(cls, v: str) -> str:
         if not v.strip():
-            raise ValueError("repo must not be empty")
+            msg = "repo must not be empty"
+            raise ValueError(msg)
         return v
 
     @field_validator("base_commit")
     @classmethod
     def base_commit_not_empty(cls, v: str) -> str:
         if not v.strip():
-            raise ValueError("base_commit must not be empty")
+            msg = "base_commit must not be empty"
+            raise ValueError(msg)
         return v
 
     @field_validator("instance_timeout_sec")
     @classmethod
     def timeout_positive(cls, v: int | None) -> int | None:
         if v is not None and v <= 0:
-            raise ValueError("instance_timeout_sec must be a positive integer")
+            msg = "instance_timeout_sec must be a positive integer"
+            raise ValueError(msg)
         return v
 
     @model_validator(mode="after")
     def validate_check_commands(self) -> "InstanceConfig":
         if not self.check_commands:
-            raise ValueError("check_commands must not be empty")
+            msg = "check_commands must not be empty"
+            raise ValueError(msg)
         names = [c.name for c in self.check_commands]
         if len(names) != len(set(names)):
-            raise ValueError("check_commands names must be unique within instance")
+            msg = "check_commands names must be unique within instance"
+            raise ValueError(msg)
         return self
 
     def resolve_patch_paths(self, instance_dir: Path) -> tuple[Path | None, Path | None]:
@@ -197,9 +211,11 @@ class InstanceConfig(BaseModel):
         try:
             resolved.relative_to(instance_resolved)
         except ValueError:
-            raise ValueError(f"{field} must not escape instance directory") from None
+            msg = f"{field} must not escape instance directory"
+            raise ValueError(msg) from None
         if not resolved.exists():
-            raise ValueError(f"{field}: file not found: {resolved}")
+            msg = f"{field}: file not found: {resolved}"
+            raise ValueError(msg)
         return resolved
 
 
@@ -219,21 +235,24 @@ class DatasetConfig(BaseModel):
     @classmethod
     def repo_not_empty(cls, v: str | None) -> str | None:
         if v is not None and not v.strip():
-            raise ValueError("repo must not be empty")
+            msg = "repo must not be empty"
+            raise ValueError(msg)
         return v
 
     @field_validator("base_commit")
     @classmethod
     def base_commit_not_empty(cls, v: str | None) -> str | None:
         if v is not None and not v.strip():
-            raise ValueError("base_commit must not be empty")
+            msg = "base_commit must not be empty"
+            raise ValueError(msg)
         return v
 
     @field_validator("instance_timeout_sec")
     @classmethod
     def timeout_positive(cls, v: int | None) -> int | None:
         if v is not None and v <= 0:
-            raise ValueError("instance_timeout_sec must be a positive integer")
+            msg = "instance_timeout_sec must be a positive integer"
+            raise ValueError(msg)
         return v
 
     @model_validator(mode="after")
@@ -241,10 +260,12 @@ class DatasetConfig(BaseModel):
         if self.check_commands is None:
             return self
         if not self.check_commands:
-            raise ValueError("check_commands must not be empty")
+            msg = "check_commands must not be empty"
+            raise ValueError(msg)
         names = [c.name for c in self.check_commands]
         if len(names) != len(set(names)):
-            raise ValueError("check_commands names must be unique within config")
+            msg = "check_commands names must be unique within config"
+            raise ValueError(msg)
         return self
 
 
@@ -260,15 +281,15 @@ def _merge_config_objects(base: dict[str, Any], override: dict[str, object]) -> 
     merged: dict[str, object] = deepcopy(base)
     for key, value in override.items():
         if key == "hooks" and isinstance(merged.get(key), dict) and isinstance(value, dict):
-            merged[key] = _merge_plain_dicts(cast(dict[str, Any], merged[key]), value)
+            merged[key] = _merge_plain_dicts(cast("dict[str, Any]", merged[key]), value)
         elif key == "docker" and isinstance(merged.get(key), dict) and isinstance(value, dict):
-            merged[key] = _merge_docker_dicts(cast(dict[str, Any], merged[key]), value)
+            merged[key] = _merge_docker_dicts(cast("dict[str, Any]", merged[key]), value)
         elif (
             key == "check_commands"
             and isinstance(merged.get(key), list)
             and isinstance(value, list)
         ):
-            merged[key] = _merge_check_commands(cast(list[object], merged[key]), value)
+            merged[key] = _merge_check_commands(cast("list[object]", merged[key]), value)
         else:
             merged[key] = deepcopy(value)
     return merged
@@ -289,11 +310,11 @@ def _merge_docker_dicts(base: dict[str, Any], override: dict[str, object]) -> di
         merged.pop("image", None)
     for key, value in override.items():
         if key == "env" and isinstance(merged.get(key), dict) and isinstance(value, dict):
-            merged[key] = _merge_plain_dicts(cast(dict[str, Any], merged[key]), value)
+            merged[key] = _merge_plain_dicts(cast("dict[str, Any]", merged[key]), value)
         elif (
             key == "env_from_host" and isinstance(merged.get(key), list) and isinstance(value, list)
         ):
-            merged[key] = _merge_unique_lists(cast(list[object], merged[key]), value)
+            merged[key] = _merge_unique_lists(cast("list[object]", merged[key]), value)
         else:
             merged[key] = deepcopy(value)
     return merged

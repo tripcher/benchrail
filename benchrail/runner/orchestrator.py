@@ -12,8 +12,7 @@ import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-from pathlib import Path
-from types import FrameType
+from typing import TYPE_CHECKING
 
 from benchrail.dto.config import DatasetConfig, InstanceConfig, merge_dataset_config
 from benchrail.dto.manifest import AgentEntry, Manifest
@@ -21,6 +20,10 @@ from benchrail.dto.result import InstanceResult, RunResult
 from benchrail.registry import AGENT_REGISTRY
 from benchrail.runner.logging_util import ConsoleOutput, RunnerLogger
 from benchrail.runner.worker import TaskSpec, run_task
+
+if TYPE_CHECKING:
+    from pathlib import Path
+    from types import FrameType
 
 _RUN_ID_RE = re.compile(r"^[a-zA-Z0-9._-]+$")
 
@@ -32,7 +35,8 @@ class ConfigError(Exception):
 def _load_json_object(path: Path) -> dict[str, object]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
-        raise ConfigError(f"{path} must contain a JSON object")
+        msg = f"{path} must contain a JSON object"
+        raise ConfigError(msg)
     return payload
 
 
@@ -42,18 +46,21 @@ def _generate_run_id() -> str:
 
 def _validate_run_id(run_id: str) -> None:
     if not _RUN_ID_RE.match(run_id):
-        raise ConfigError(f"run_id {run_id!r} is not filesystem-safe (allowed: [a-zA-Z0-9._-])")
+        msg = f"run_id {run_id!r} is not filesystem-safe (allowed: [a-zA-Z0-9._-])"
+        raise ConfigError(msg)
 
 
 def _load_manifest(dataset_path: Path) -> Manifest:
     manifest_file = dataset_path / "manifest.json"
     if not manifest_file.exists():
-        raise ConfigError(f"manifest.json not found in {dataset_path}")
+        msg = f"manifest.json not found in {dataset_path}"
+        raise ConfigError(msg)
     try:
         data = _load_json_object(manifest_file)
         return Manifest.model_validate(data)
     except Exception as e:
-        raise ConfigError(f"Invalid manifest.json: {e}") from e
+        msg = f"Invalid manifest.json: {e}"
+        raise ConfigError(msg) from e
 
 
 def _load_dataset_config(dataset_path: Path) -> DatasetConfig | None:
@@ -64,7 +71,8 @@ def _load_dataset_config(dataset_path: Path) -> DatasetConfig | None:
         data = _load_json_object(config_file)
         return DatasetConfig.model_validate(data)
     except Exception as e:
-        raise ConfigError(f"Invalid dataset config.json: {e}") from e
+        msg = f"Invalid dataset config.json: {e}"
+        raise ConfigError(msg) from e
 
 
 def _discover_instances(dataset_path: Path) -> dict[str, InstanceConfig]:
@@ -83,13 +91,15 @@ def _discover_instances(dataset_path: Path) -> dict[str, InstanceConfig]:
             config = InstanceConfig.model_validate(merged_data)
             config.docker.resolve_dockerfile_path(item, dataset_path)
         except Exception as e:
-            raise ConfigError(f"Invalid config.json in {item.name}: {e}") from e
+            msg = f"Invalid config.json in {item.name}: {e}"
+            raise ConfigError(msg) from e
 
         if config.instance_id != item.name:
-            raise ConfigError(
+            msg = (
                 f"instance_id {config.instance_id!r} in config.json does not match"
                 f" directory name {item.name!r}"
             )
+            raise ConfigError(msg)
         instances[config.instance_id] = config
     return instances
 
@@ -108,7 +118,8 @@ def _build_task_queue(
     if filter_agents:
         unknown = set(filter_agents) - agent_ids
         if unknown:
-            raise ConfigError(f"Unknown agent ids: {', '.join(sorted(unknown))}")
+            msg = f"Unknown agent ids: {', '.join(sorted(unknown))}"
+            raise ConfigError(msg)
         selected_agents = [a for a in manifest.agents if a.id in set(filter_agents)]
     else:
         selected_agents = list(manifest.agents)
@@ -116,16 +127,16 @@ def _build_task_queue(
     # Validate agent types in registry
     for agent in selected_agents:
         if agent.agent not in AGENT_REGISTRY:
-            raise ConfigError(
-                f"Agent type {agent.agent!r} (id={agent.id!r}) not found in AGENT_REGISTRY"
-            )
+            msg = f"Agent type {agent.agent!r} (id={agent.id!r}) not found in AGENT_REGISTRY"
+            raise ConfigError(msg)
 
     # Validate instance filter
     instance_ids = set(instances.keys())
     if filter_instances:
         unknown = set(filter_instances) - instance_ids
         if unknown:
-            raise ConfigError(f"Unknown instance ids: {', '.join(sorted(unknown))}")
+            msg = f"Unknown instance ids: {', '.join(sorted(unknown))}"
+            raise ConfigError(msg)
         selected_instances = sorted(iid for iid in filter_instances if iid in instance_ids)
     else:
         selected_instances = sorted(instance_ids)
@@ -137,15 +148,18 @@ def _build_task_queue(
         try:
             config.resolve_patch_paths(instance_dir)
         except ValueError as e:
-            raise ConfigError(f"Instance {iid}: {e}") from e
+            msg = f"Instance {iid}: {e}"
+            raise ConfigError(msg) from e
         try:
             config.resolve_expected_migration_json_path(instance_dir)
         except ValueError as e:
-            raise ConfigError(f"Instance {iid}: {e}") from e
+            msg = f"Instance {iid}: {e}"
+            raise ConfigError(msg) from e
         try:
             config.docker.resolve_dockerfile_path(instance_dir, dataset_path)
         except ValueError as e:
-            raise ConfigError(f"Instance {iid}: {e}") from e
+            msg = f"Instance {iid}: {e}"
+            raise ConfigError(msg) from e
 
     # Sort agents by id for deterministic order
     selected_agents.sort(key=lambda a: a.id)
@@ -157,7 +171,8 @@ def _build_task_queue(
             queue.append((iid, agent, instances[iid]))
 
     if not queue:
-        raise ConfigError("No tasks to run after applying filters")
+        msg = "No tasks to run after applying filters"
+        raise ConfigError(msg)
 
     return queue
 
@@ -261,7 +276,8 @@ def run_benchmark(
 
     # Validate dataset path
     if not dataset_path.is_dir():
-        raise ConfigError(f"Dataset path does not exist: {dataset_path}")
+        msg = f"Dataset path does not exist: {dataset_path}"
+        raise ConfigError(msg)
 
     # Determine run_id
     if run_id:
@@ -273,29 +289,32 @@ def run_benchmark(
     workspace.mkdir(parents=True, exist_ok=True)
     run_workspace = workspace / run_id
     if run_workspace.exists():
-        raise ConfigError(
+        msg = (
             f"Workspace directory already exists: {run_workspace}\n"
             "Use a different --run_id or remove it manually."
         )
+        raise ConfigError(msg)
 
     # Check output collision
     if output:
         output.mkdir(parents=True, exist_ok=True)
         run_output = output / run_id
         if run_output.exists():
-            raise ConfigError(
+            msg = (
                 f"Output directory already exists: {run_output}\n"
                 "Use a different --run_id or remove it manually."
             )
+            raise ConfigError(msg)
 
     logs_root = logs or workspace
     logs_root.mkdir(parents=True, exist_ok=True)
     run_logs = logs_root / run_id
     if run_logs.exists():
-        raise ConfigError(
+        msg = (
             f"Logs directory already exists: {run_logs}\n"
             "Use a different --run_id or remove it manually."
         )
+        raise ConfigError(msg)
 
     # Load dataset
     manifest = _load_manifest(dataset_path)
@@ -370,7 +389,7 @@ def run_benchmark(
                 try:
                     result = future.result()
                     instance_results.append(result)
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001
                     run_logger.error(
                         "WORKER_CRASH",
                         instance=spec.instance_id,
@@ -379,7 +398,7 @@ def run_benchmark(
                     )
                     run_status = "failed"
 
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         run_logger.error("ORCHESTRATOR_ERROR", error=str(exc)[:500])
         run_status = "failed"
     finally:
@@ -406,7 +425,7 @@ def run_benchmark(
     try:
         _write_run_result_atomic(run_result, run_result_path)
         _write_csv_atomic(instance_results, csv_path)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         run_logger.error("RESULT_WRITE_FAILED", error=str(exc)[:500])
         run_result = run_result.model_copy(update={"status": "failed"})
         run_status = "failed"

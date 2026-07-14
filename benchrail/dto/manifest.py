@@ -13,9 +13,11 @@ class AgentEntry(BaseModel):
     @classmethod
     def validate_id(cls, v: str) -> str:
         if not v:
-            raise ValueError("Agent id must not be empty")
+            msg = "Agent id must not be empty"
+            raise ValueError(msg)
         if not re.match(r"^[a-zA-Z0-9._-]+$", v):
-            raise ValueError(f"Agent id {v!r} is not filesystem-safe")
+            msg = f"Agent id {v!r} is not filesystem-safe"
+            raise ValueError(msg)
         return v
 
 
@@ -27,8 +29,10 @@ class Manifest(BaseModel):
         seen: set[str] = set()
         for entry in self.agents:
             if entry.id in seen:
-                raise ValueError(f"Duplicate agent id: {entry.id!r}")
+                msg = f"Duplicate agent id: {entry.id!r}"
+                raise ValueError(msg)
             seen.add(entry.id)
         if not self.agents:
-            raise ValueError("agents[] must not be empty")
+            msg = "agents[] must not be empty"
+            raise ValueError(msg)
         return self

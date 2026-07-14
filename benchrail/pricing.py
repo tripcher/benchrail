@@ -110,9 +110,9 @@ def calc_codex_credits(
     if prices is None:
         return None
     mtok = 1_000_000
-    credits = (
+    credit_total = (
         input_tokens / mtok * prices["input"]
         + cached_input_tokens / mtok * prices["cached_input"]
         + output_tokens / mtok * prices["output"]
     )
-    return float(round(credits, 4))
+    return float(round(credit_total, 4))
