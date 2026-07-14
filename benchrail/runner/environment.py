@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import shutil
-from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def copy_environment(src_dir: Path, dst_dir: Path) -> None:

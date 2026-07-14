@@ -5,13 +5,16 @@ from __future__ import annotations
 import subprocess
 import threading
 import time
-from collections.abc import Mapping
 from dataclasses import dataclass
-from io import BufferedReader
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from benchrail.runner.git import GitCommandResult, setup_and_cleanup_repository
 from benchrail.runner.logging_util import RunnerLogger, TruncatingWriter
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from io import BufferedReader
 
 
 @dataclass
@@ -97,7 +100,7 @@ def run_command(
         stderr_tail = _read_tail(stderr_data) if exit_code != 0 or timed_out else ""
 
         if timed_out:
-            logger.warn(
+            logger.warning(
                 f"{event_name}_TIMEOUT",
                 elapsed_ms=duration_ms,
                 limit_ms=timeout * 1000,

@@ -24,7 +24,7 @@
     }
   ],
   "docker": {
-    "image": "benchrail-universal:latest",
+    "image": "ghcr.io/tripcher/benchrail-universal:latest",
     "env": {},
     "env_from_host": [
       "CODEX_API_KEY"

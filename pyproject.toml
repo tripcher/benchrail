@@ -67,16 +67,82 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = [
-    "E",   # pycodestyle errors
-    "W",   # pycodestyle warnings
-    "F",   # pyflakes
-    "I",   # isort
-    "UP",  # pyupgrade
-    "B",   # flake8-bugbear
-    "SIM", # flake8-simplify
-    "RUF", # ruff-specific rules
+    "F",    # Pyflakes rules
+    "W",    # PyCodeStyle warnings
+    "E",    # PyCodeStyle errors
+    "I",    # Sort imports properly
+    "S",    # Enforce bandit rules
+    "G",    # Validate (lack of) logging format strings
+    "B",    # Finding likely bugs and design problems
+    "A",    # Check for python builtins used as variables or parameters
+    "N",    # PEP8 naming conventions
+    "UP",   # Warn if things can change due to newer Python versions
+    "C4",   # Catch incorrect use of comprehensions, dict, list, etc
+    "FA",   # Enforce from __future__ import annotations
+    "ISC",  # Good use of string concatenation
+    "ICN",  # Use common import conventions
+    "RET",  # Good return practices
+    "SIM",  # Common simplification rules
+    "TID",  # Some good import practices
+    "TC",   # Enforce importing certain types in a TYPE_CHECKING block
+    "PTH",  # Use pathlib instead of os.path
+    "FURB", # Suggest more idiomatic Python patterns
+    "ANN",  # Enforce type annotations
+    "BLE",  # Avoid blind exception
+    "DTZ",  # Ban the usage of unsafe naive datetime class
+    "EM",   # Helps format nice error messages
+    "LOG",  # Checks for issues using the standard library logging module
+    "T20",  # Check for Print statements
+    "PT",   # Checking common style issues with pytest-based tests
+    "ARG",  # Checks for unused function arguments
+    "C90",  # Enable mccabe
+    "RUF",  # Enable ruff rules
+]
+ignore = [
+    "W191",   # Conflicts with formatter indentation
+    "E111",   # Conflicts with formatter indentation
+    "E114",   # Conflicts with formatter indentation
+    "E117",   # Conflicts with formatter indentation
+    "COM812", # Conflicts with formatter trailing-comma behavior
+    "COM819", # Conflicts with formatter trailing-comma behavior
+    "G004",   # Custom RunnerLogger, not stdlib logging — f-strings are fine
 ]
 
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = [
+    "S101",   # assert is idiomatic in pytest
+    "ARG001", "ARG002", "ARG005",  # unused args in test mocks and fixtures
+    "S603", "S607",  # subprocess calls in test helpers
+    "S108",   # /tmp paths are acceptable in tests
+    "TC001", "TC002", "TC003",  # type imports in tests do not need TYPE_CHECKING
+    "ANN",    # type annotations not required in tests
+    "T201",   # print allowed in tests
+]
+"benchrail/runner/worker.py" = [
+    "S602", "S603", "S604", "S607",  # intentional subprocess/shell=True for benchmark hooks
+    "S108",   # /tmp in docker exec context is expected
+    "ANN401", # duck-typed docker adapter interfaces require Any
+    "ARG001", # interface-required parameters may be unused in some modes
+    "C901",   # orchestration functions are inherently complex
+]
+"benchrail/runner/local.py" = [
+    "S603", "S607",  # subprocess calls to run benchmark hook commands
+]
+"benchrail/runner/orchestrator.py" = [
+    "C901",   # orchestration functions are inherently complex
+]
+"benchrail/commands/validate.py" = [
+    "C901",   # validation command iterates many checks
+]
+"benchrail/adapters/claude_code.py" = [
+    "ARG002", # execution_mode is required by the base adapter interface
+]
+"benchrail/pydantic_compat.py" = [
+    "ANN401", # pydantic v1 compat layer intentionally uses Any
+]
+"benchrail/dto/result.py" = [
+    "C901",   # aggregate() is inherently complex — aggregates many optional fields
+]
 
 [tool.ruff.lint.isort]
 known-first-party = ["benchrail"]

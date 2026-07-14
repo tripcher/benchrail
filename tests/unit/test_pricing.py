@@ -99,24 +99,24 @@ def test_codex_credits_lookup() -> None:
 
 
 def test_calc_codex_credits_basic() -> None:
-    credits = calc_codex_credits(
+    credit_total = calc_codex_credits(
         "gpt-5.4",
         input_tokens=1_000_000,
         output_tokens=1_000_000,
     )
-    assert credits == pytest.approx(437.5, rel=1e-5)
+    assert credit_total == pytest.approx(437.5, rel=1e-5)
 
 
 def test_calc_codex_credits_with_cache() -> None:
-    credits = calc_codex_credits(
+    credit_total = calc_codex_credits(
         "gpt-5.4",
         input_tokens=1_000_000,
         output_tokens=0,
         cached_input_tokens=1_000_000,
     )
-    assert credits == pytest.approx(68.75, rel=1e-5)
+    assert credit_total == pytest.approx(68.75, rel=1e-5)
 
 
 def test_calc_codex_credits_unknown_model() -> None:
-    credits = calc_codex_credits("gpt-99", 1000, 1000)
-    assert credits is None
+    credit_total = calc_codex_credits("gpt-99", 1000, 1000)
+    assert credit_total is None

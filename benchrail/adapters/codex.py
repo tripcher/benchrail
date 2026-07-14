@@ -112,7 +112,7 @@ class CodexAdapter(BaseAdapter):
                     output_tokens += _as_int(usage.get("output_tokens"))
                     cache_read_tokens += _as_int(usage.get("cached_input_tokens"))
                     reasoning_tokens += _as_int(usage.get("reasoning_output_tokens"))
-        except Exception:
+        except (json.JSONDecodeError, ValueError, KeyError, TypeError, AttributeError):
             pass
 
         cost_usd: float | None = None

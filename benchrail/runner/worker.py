@@ -10,15 +10,17 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
-from benchrail.adapters.base import AgentRunResult
-from benchrail.dto.config import InstanceConfig
-from benchrail.dto.manifest import AgentEntry
 from benchrail.dto.result import AgentStats, CheckResult, InstanceResult
 from benchrail.registry import build_adapter
 from benchrail.runner.environment import copy_environment_layers
 from benchrail.runner.logging_util import ConsoleOutput, RunnerLogger
+
+if TYPE_CHECKING:
+    from benchrail.adapters.base import AgentRunResult
+    from benchrail.dto.config import InstanceConfig
+    from benchrail.dto.manifest import AgentEntry
 
 
 @dataclass
@@ -42,8 +44,8 @@ class _AgentPatchBaseline:
     untracked_files: tuple[str, ...]
 
 
-class _StepFailed(Exception):
-    def __init__(self, reason: str, step: str, exit_code: int = -1):
+class _StepFailedError(Exception):
+    def __init__(self, reason: str, step: str, exit_code: int = -1) -> None:
         super().__init__(reason)
         self.reason = reason
         self.step = step
@@ -67,7 +69,7 @@ def _resolve_docker_env(spec: TaskSpec) -> dict[str, str]:
         docker_config.env_from_host,
     )
     if missing:
-        raise _StepFailed(
+        raise _StepFailedError(
             reason=f"missing docker env vars: {', '.join(sorted(missing))}",
             step="env_resolution",
         )
@@ -130,7 +132,7 @@ def _copy_auth_session_file_if_needed(
     if session_file is None:
         return
     if not session_file.exists():
-        raise _StepFailed(
+        raise _StepFailedError(
             reason=f"agent auth subscription file not found: {session_file}",
             step="docker_start",
         )
@@ -139,7 +141,7 @@ def _copy_auth_session_file_if_needed(
     try:
         relpath = session_file.relative_to(home_dir)
     except ValueError as exc:
-        raise _StepFailed(
+        raise _StepFailedError(
             reason=(f"agent auth subscription file must be under home directory: {session_file}"),
             step="docker_start",
         ) from exc
@@ -152,10 +154,8 @@ def _copy_auth_session_file_if_needed(
             str(relpath),
         )
     except Exception as exc:
-        raise _StepFailed(
-            f"failed to copy agent auth subscription: {exc}",
-            "docker_start",
-        ) from exc
+        msg = f"failed to copy agent auth subscription: {exc}"
+        raise _StepFailedError(msg, "docker_start") from exc
 
 
 def _agent_runtime_env(agent_entry: AgentEntry, existing_env: dict[str, str]) -> dict[str, str]:
@@ -204,7 +204,7 @@ def _resolve_dockerfile(spec: TaskSpec) -> Path | None:
             spec.instance_dir.parent,
         )
     except ValueError as exc:
-        raise _StepFailed(str(exc), "docker_build") from exc
+        raise _StepFailedError(str(exc), "docker_build") from exc
 
 
 def _build_agent_stats(agent_run: AgentRunResult | None) -> AgentStats:
@@ -269,7 +269,7 @@ def _emit_task_runner_log(spec: TaskSpec, console: _ConsoleLike) -> None:
         console.print(f"\n{header}\n[missing runner.log]\n{footer}")
         return
     log_text = log_path.read_text(encoding="utf-8", errors="replace").rstrip()
-    body = log_text if log_text else "[empty runner.log]"
+    body = log_text or "[empty runner.log]"
     console.print(f"\n{header}\n{body}\n{footer}")
 
 
@@ -311,10 +311,12 @@ git ls-files --others --exclude-standard
 def _parse_agent_patch_baseline(stdout: str) -> _AgentPatchBaseline:
     lines = stdout.splitlines()
     if not lines:
-        raise ValueError("baseline snapshot did not return a tree oid")
+        msg = "baseline snapshot did not return a tree oid"
+        raise ValueError(msg)
     tree_oid = lines[0].strip()
     if not tree_oid:
-        raise ValueError("baseline snapshot returned an empty tree oid")
+        msg = "baseline snapshot returned an empty tree oid"
+        raise ValueError(msg)
     untracked_start = 1
     if len(lines) > 1 and lines[1] == "--":
         untracked_start = 2
@@ -372,7 +374,7 @@ def _snapshot_repo_tree_local(
     )
     try:
         if r.returncode != 0:
-            task_logger.warn(
+            task_logger.warning(
                 f"{log_event}_FAILED",
                 exit_code=r.returncode,
                 stderr_tail=r.stderr[-500:].strip(),
@@ -386,7 +388,7 @@ def _snapshot_repo_tree_local(
         )
         return baseline
     except ValueError as exc:
-        task_logger.warn(f"{log_event}_FAILED", reason=str(exc))
+        task_logger.warning(f"{log_event}_FAILED", reason=str(exc))
         return None
     finally:
         index_path.unlink(missing_ok=True)
@@ -435,7 +437,7 @@ def _snapshot_agent_patch_local(
     )
     patch_path.write_text(patch_text, encoding="utf-8")
     if exit_code != 0:
-        task_logger.warn(
+        task_logger.warning(
             "AGENT_PATCH_SNAPSHOT_FAILED",
             path=str(patch_path),
             exit_code=exit_code,
@@ -470,7 +472,7 @@ def _snapshot_repo_tree_docker(
     )
     try:
         if r.exit_code != 0 or r.timed_out:
-            task_logger.warn(
+            task_logger.warning(
                 f"{log_event}_FAILED",
                 exit_code=r.exit_code,
                 timed_out=r.timed_out,
@@ -487,7 +489,7 @@ def _snapshot_repo_tree_docker(
         )
         return baseline
     except ValueError as exc:
-        task_logger.warn(f"{log_event}_FAILED", reason=str(exc))
+        task_logger.warning(f"{log_event}_FAILED", reason=str(exc))
         return None
 
 
@@ -529,7 +531,7 @@ def _snapshot_agent_patch_docker(
             event_name="AGENT_PATCH_SNAPSHOT",
         )
         if r.exit_code != 0 or r.timed_out:
-            task_logger.warn(
+            task_logger.warning(
                 "AGENT_PATCH_SNAPSHOT_FAILED",
                 path=str(patch_path),
                 exit_code=r.exit_code,
@@ -547,7 +549,7 @@ def _snapshot_agent_patch_docker(
             "agent_patch_current_tree",
         )
         if current_tree is None:
-            task_logger.warn(
+            task_logger.warning(
                 "AGENT_PATCH_SNAPSHOT_FAILED",
                 path=str(patch_path),
                 reason="failed to capture current tree for agent-only patch",
@@ -563,7 +565,7 @@ def _snapshot_agent_patch_docker(
             event_name="AGENT_PATCH_SNAPSHOT",
         )
         if r.exit_code != 0 or r.timed_out:
-            task_logger.warn(
+            task_logger.warning(
                 "AGENT_PATCH_SNAPSHOT_FAILED",
                 path=str(patch_path),
                 exit_code=r.exit_code,
@@ -572,7 +574,7 @@ def _snapshot_agent_patch_docker(
             )
             return
     if baseline is None and not patch_path.exists():
-        task_logger.warn(
+        task_logger.warning(
             "AGENT_PATCH_SNAPSHOT_FAILED",
             path=str(patch_path),
             reason="agent patch snapshot did not produce an output file",
@@ -596,7 +598,7 @@ def _warn_if_agent_succeeded_without_changes(
     patch_bytes = patch_path.stat().st_size if patch_path.exists() else 0
     if patch_bytes > 0 or modified_files:
         return
-    task_logger.warn(
+    task_logger.warning(
         "AGENT_NO_CHANGES",
         path=str(patch_path),
         bytes=patch_bytes,
@@ -653,8 +655,7 @@ def _parse_patch_touched_files(patch_path: Path) -> list[str]:
         if len(parts) < 4:
             continue
         candidate = parts[2]
-        if candidate.startswith("a/"):
-            candidate = candidate[2:]
+        candidate = candidate.removeprefix("a/")
         if candidate != "/dev/null" and candidate not in seen:
             seen.add(candidate)
             files.append(candidate)
@@ -687,7 +688,7 @@ def _log_patch_context(
         note="patch compatibility still depends on dataset design and post-agent repository state",
     )
     if overlap:
-        task_logger.warn(
+        task_logger.warning(
             f"{event_prefix}_OVERLAP",
             overlap_count=len(overlap),
             overlap_sample=_sample_items(overlap),
@@ -731,16 +732,16 @@ def _run_local(
     def _check_timeout() -> None:
         if timeout_event.is_set():
             elapsed = int((time.monotonic() - start_time) * 1000)
-            task_logger.warn(
+            task_logger.warning(
                 "INSTANCE_TIMEOUT",
                 elapsed_ms=elapsed,
                 limit_ms=(spec.instance_config.instance_timeout_sec or 0) * 1000,
             )
-            raise _StepFailed("instance_timeout", "timeout")
+            raise _StepFailedError("instance_timeout", "timeout")  # noqa: EM101
 
     def _check_stop() -> None:
         if spec.stop_flag.is_set():
-            raise _StepFailed("aborted", "abort")
+            raise _StepFailedError("aborted", "abort")  # noqa: EM101
 
     try:
         task_dir.mkdir(parents=True, exist_ok=True)
@@ -774,7 +775,7 @@ def _run_local(
             logger=task_logger,
         )
         if err:
-            raise _StepFailed(err, "clone", exit_code=1)
+            raise _StepFailedError(err, "clone", exit_code=1)
 
         _check_stop()
         _check_timeout()
@@ -784,7 +785,7 @@ def _run_local(
         if prepare_path:
             r = loc.apply_patch(prepare_path, repo_dir, env, logs_dir, "prepare_patch", task_logger)
             if r.exit_code != 0:
-                raise _StepFailed("prepare_patch failed", "prepare_patch", r.exit_code)
+                raise _StepFailedError("prepare_patch failed", "prepare_patch", r.exit_code)  # noqa: EM101
 
         _check_stop()
         _check_timeout()
@@ -806,7 +807,7 @@ def _run_local(
                 log_extra={"command": hook.command},
             )
             if r.exit_code != 0 or r.timed_out:
-                raise _StepFailed("before_agent hook failed", "before_agent", r.exit_code)
+                raise _StepFailedError("before_agent hook failed", "before_agent", r.exit_code)  # noqa: EM101
 
         _check_stop()
         _check_timeout()
@@ -877,7 +878,7 @@ def _run_local(
             )
             r = loc.apply_patch(test_path, repo_dir, env, logs_dir, "test_patch", task_logger)
             if r.exit_code != 0:
-                raise _StepFailed("test_patch failed", "test_patch", r.exit_code)
+                raise _StepFailedError("test_patch failed", "test_patch", r.exit_code)  # noqa: EM101
 
         _check_stop()
         _check_timeout()
@@ -898,7 +899,7 @@ def _run_local(
                 log_extra={"command": hook.command},
             )
             if r.exit_code != 0 or r.timed_out:
-                raise _StepFailed("before_checks hook failed", "before_checks", r.exit_code)
+                raise _StepFailedError("before_checks hook failed", "before_checks", r.exit_code)  # noqa: EM101
 
         # Run checks (run all, don't stop on first failure)
         for check in spec.instance_config.check_commands:
@@ -944,11 +945,11 @@ def _run_local(
                 exit_code=r.exit_code,
             )
 
-    except _StepFailed as exc:
+    except _StepFailedError as exc:
         fail_step = exc.step
         fail_exit_code = exc.exit_code
         task_logger.error("TASK_FAIL", reason=exc.reason, step=exc.step)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         fail_step = "unexpected"
         fail_exit_code = -1
         task_logger.error("TASK_FAIL", reason=str(exc)[:500], step="unexpected")
@@ -1031,16 +1032,16 @@ def _run_docker(
     def _check_timeout() -> None:
         if timeout_event.is_set():
             elapsed = int((time.monotonic() - start_time) * 1000)
-            task_logger.warn(
+            task_logger.warning(
                 "INSTANCE_TIMEOUT",
                 elapsed_ms=elapsed,
                 limit_ms=(spec.instance_config.instance_timeout_sec or 0) * 1000,
             )
-            raise _StepFailed("instance_timeout", "timeout")
+            raise _StepFailedError("instance_timeout", "timeout")  # noqa: EM101
 
     def _check_stop() -> None:
         if spec.stop_flag.is_set():
-            raise _StepFailed("aborted", "abort")
+            raise _StepFailedError("aborted", "abort")  # noqa: EM101
 
     try:
         task_dir.mkdir(parents=True, exist_ok=True)
@@ -1070,10 +1071,8 @@ def _run_docker(
         else:
             dockerfile = _resolve_dockerfile(spec)
             if dockerfile is None:
-                raise _StepFailed(
-                    "docker config must define either docker.image or docker.dockerfile",
-                    "docker_build",
-                )
+                msg = "docker config must define either docker.image or docker.dockerfile"
+                raise _StepFailedError(msg, "docker_build")
             image_ref = dk.make_image_tag(spec.run_id, spec.agent_entry.id, spec.instance_id)
             success = dk.build_image(
                 dockerfile.parent,
@@ -1083,7 +1082,7 @@ def _run_docker(
                 task_logger,
             )
             if not success:
-                raise _StepFailed("docker build failed", "docker_build")
+                raise _StepFailedError("docker build failed", "docker_build")  # noqa: EM101
 
         _check_stop()
         _check_timeout()
@@ -1098,7 +1097,7 @@ def _run_docker(
             task_logger,
         )
         if docker_runner is None:
-            raise _StepFailed("container create/start failed", "docker_start")
+            raise _StepFailedError("container create/start failed", "docker_start")  # noqa: EM101
 
         err = dk.setup_repository(
             docker_runner,
@@ -1109,7 +1108,7 @@ def _run_docker(
             logger=task_logger,
         )
         if err:
-            raise _StepFailed(err, "clone", exit_code=1)
+            raise _StepFailedError(err, "clone", exit_code=1)
 
         _check_stop()
         _check_timeout()
@@ -1126,7 +1125,7 @@ def _run_docker(
                 "prepare_patch",
             )
             if r.exit_code != 0:
-                raise _StepFailed("prepare_patch failed", "prepare_patch", r.exit_code)
+                raise _StepFailedError("prepare_patch failed", "prepare_patch", r.exit_code)  # noqa: EM101
 
         _check_stop()
         _check_timeout()
@@ -1145,7 +1144,7 @@ def _run_docker(
                 event_name="BEFORE_AGENT",
             )
             if r.exit_code != 0 or r.timed_out:
-                raise _StepFailed("before_agent failed", "before_agent", r.exit_code)
+                raise _StepFailedError("before_agent failed", "before_agent", r.exit_code)  # noqa: EM101
 
         _check_stop()
         _check_timeout()
@@ -1226,7 +1225,7 @@ def _run_docker(
                 "test_patch",
             )
             if r.exit_code != 0:
-                raise _StepFailed("test_patch failed", "test_patch", r.exit_code)
+                raise _StepFailedError("test_patch failed", "test_patch", r.exit_code)  # noqa: EM101
 
         _check_stop()
         _check_timeout()
@@ -1244,7 +1243,7 @@ def _run_docker(
                 event_name="BEFORE_CHECKS",
             )
             if r.exit_code != 0 or r.timed_out:
-                raise _StepFailed("before_checks failed", "before_checks", r.exit_code)
+                raise _StepFailedError("before_checks failed", "before_checks", r.exit_code)  # noqa: EM101
 
         # Run checks
         for check in spec.instance_config.check_commands:
@@ -1280,11 +1279,11 @@ def _run_docker(
             )
             task_logger.info("CHECK_END", name=check.name, status=status, duration_ms=r.duration_ms)
 
-    except _StepFailed as exc:
+    except _StepFailedError as exc:
         fail_step = exc.step
         fail_exit_code = exc.exit_code
         task_logger.error("TASK_FAIL", reason=exc.reason, step=exc.step)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         fail_step = "unexpected"
         fail_exit_code = -1
         task_logger.error("TASK_FAIL", reason=str(exc)[:500], step="unexpected")
@@ -1375,11 +1374,11 @@ def run_task(
     try:
         if spec.mode == "local":
             return _run_local(spec, run_logger, console)
-        elif spec.mode == "docker":
+        if spec.mode == "docker":
             return _run_docker(spec, run_logger, console)
-        else:
-            raise ValueError(f"Unknown mode: {spec.mode}")
-    except Exception as exc:
+        msg = f"Unknown mode: {spec.mode}"
+        raise ValueError(msg)
+    except Exception as exc:  # noqa: BLE001
         task_logs_dir = _task_logs_dir(spec)
         task_logger = RunnerLogger(task_logs_dir / "runner.log")
         return _fail_result(

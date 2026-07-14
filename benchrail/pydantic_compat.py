@@ -39,7 +39,8 @@ else:
 
     def model_validator(*, mode: str) -> Any:
         if mode != "after":
-            raise NotImplementedError("Only model_validator(mode='after') is supported")
+            msg = "Only model_validator(mode='after') is supported"
+            raise NotImplementedError(msg)
 
         def decorator(fn: Any) -> Any:
             @root_validator(allow_reuse=True, skip_on_failure=True)

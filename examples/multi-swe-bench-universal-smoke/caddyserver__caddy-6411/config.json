@@ -24,7 +24,7 @@
     }
   ],
   "docker": {
-    "image": "benchrail-universal:latest",
+    "image": "ghcr.io/tripcher/benchrail-universal:latest",
     "env": {
       "BENCH_ENV_GO_VERSION": "1.24.3"
     },

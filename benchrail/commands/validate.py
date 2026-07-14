@@ -12,7 +12,8 @@ import typer
 def _load_json_object(path: Path) -> dict[str, object]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
-        raise ValueError(f"{path.name} must contain a JSON object")
+        msg = f"{path.name} must contain a JSON object"
+        raise ValueError(msg)
     return payload
 
 
@@ -45,7 +46,7 @@ def validate_cmd(
         data = _load_json_object(manifest_file)
         manifest = Manifest.model_validate(data)
         typer.echo(f"  manifest.json  OK  ({len(manifest.agents)} agents)")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         errors.append(f"manifest.json invalid: {e}")
 
     dataset_config_file = dataset / "config.json"
@@ -54,7 +55,7 @@ def validate_cmd(
             data = _load_json_object(dataset_config_file)
             dataset_config = DatasetConfig.model_validate(data)
             typer.echo("  config.json  OK  (dataset defaults)")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             errors.append(f"config.json invalid: {e}")
 
     if manifest:
@@ -77,7 +78,7 @@ def validate_cmd(
             instance_data = _load_json_object(config_file)
             merged_data = merge_dataset_config(dataset_config, instance_data)
             config = InstanceConfig.model_validate(merged_data)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             errors.append(f"{item.name}/config.json invalid: {e}")
             continue
 

@@ -20,7 +20,7 @@ def run_cmd(
     workspace: Annotated[
         Path,
         typer.Option("--workspace", help="Workspace root directory (default: current dir)"),
-    ] = Path("."),
+    ] = Path(),
     agents: Annotated[
         str | None,
         typer.Option("--agents", help="Comma-separated agent ids to run"),
@@ -90,7 +90,7 @@ def run_cmd(
     except ConfigError as e:
         typer.echo(f"Configuration error: {e}", err=True)
         raise typer.Exit(2) from None
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         typer.echo(f"Fatal error: {e}", err=True)
         raise typer.Exit(1) from None
 
